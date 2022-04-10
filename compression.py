@@ -5,6 +5,7 @@ from itertools import product
 from math import sqrt, cos, pi
 from scipy.fft import dctn, idctn
 import matplotlib.pyplot as plt
+from dahuffman import HuffmanCodec
 
 
 # Options for debugging.
@@ -222,9 +223,13 @@ def quantize(mat, width, height, isInv=False, isLum=True):
     if isInv:
         for N, M, cols, rows in product(range(0, width, 8), range(0, height, 8), range(8), range(8)):
             # for cols, rows in product(range(8), repeat=2):
+            if M + rows >= height or cols + N >= width:
+                break
             quantized[M + rows - 1, N + cols - 1] = round(mat[M + rows - 1, N + cols - 1] * quantMat[rows, cols])
     else:
         for N, M, cols, rows in product(range(0, width, 8), range(0, height, 8), range(8), range(8)):
+            if M + rows >= height or cols + N >= width:
+                break
             # for cols, rows in product(range(8), repeat=2):
             quantized[M + rows - 1, N + cols - 1] = round(mat[M + rows - 1, N + cols - 1] / quantMat[rows, cols])
 
@@ -245,6 +250,8 @@ def extractCoefficients(mat, width, height):
     matIdx = 0
 
     for N, M in product(range(0, height, 8), range(0, width, 8)):
+        if N >= height // 8 or M >= width // 8:
+            break
         coeffBlock = np.zeros(64, )  # Vector representing a single row of the coefficient matrix.
         prevCoord = np.zeros((2, 64))  # Matrix used to store the coordinates of the previous square in the 8x8
         # block according the zigzag pattern.
@@ -261,14 +268,14 @@ def extractCoefficients(mat, width, height):
             prevCoord[1, i] = cols
 
             # TOP LEFT: move to the right.
-            if rows == N & cols == M:
+            if rows == N and cols == M:
                 cols += 1
             # TOP RIGHT: move down and to the left.
-            elif rows == N & cols == M + 7:
+            elif rows == N and cols == M + 7:
                 rows += 1
                 cols -= 1
             # BOTTOM LEFT: move to the right.
-            elif rows == N + 7 & cols == M:
+            elif rows == N + 7 and cols == M:
                 cols += 1
             # ALONG TOP ROW: if previous position along top row, move down and to the left. Else, move to the right.
             elif rows == N:
@@ -302,14 +309,14 @@ def extractCoefficients(mat, width, height):
                     rows += 1
             # ELSE: if previous position was one row down, we are moving up and right. Else, we are moving down and
             # left.
-            elif (cols > M | cols < M + 7) & (rows > N | rows < N + 7):
+            elif (cols > M | cols < M + 7) and (rows > N | rows < N + 7):
                 if prevCoord[0, i - 1] == rows + 1:
                     rows -= 1
                     cols += 1
                 else:
                     rows += 1
                     cols -= 1
-            elif rows == N + 7 & cols == M + 7:
+            elif rows == N + 7 and cols == M + 7:
                 break
 
         # Save coefficients for one 8x8 block as a row in the coefficent matrix.
@@ -425,6 +432,47 @@ def motionEstimation(y_curr, y_ref, cr_ref, cb_ref, width, height):
 
     return coordMat, MV_arr, MV_subarr, y_pred, cb_pred, cr_pred
 
+def getDC(CoeffMat):
+    '''
+    Computes DC coefficients for a given YCbCr component.
+    :param yCoeffMat: YCbCr component.
+    :return: DC coefficients.
+    '''
+    dc_coeff = np.zeros(CoeffMat.shape[0])
+    for i in range(CoeffMat.shape[0]):
+        dc_coeff[i] = CoeffMat[i, 0]
+    dcdpcm = np.zeros(CoeffMat.shape[0])
+    dcdpcm[0] = dc_coeff[0]
+    for i in range(1, CoeffMat.shape[0]):
+        dcdpcm[i] = dc_coeff[i] - dc_coeff[i - 1]
+    return dc_coeff, dcdpcm
+
+# hasn't finished
+def getAC(CoeffMat):
+    '''
+    Computes AC coefficients for a given YCbCr component.
+    :param yCoeffMat: YCbCr component.
+    :return: AC coefficients.
+    '''
+    ac_coeff = np.zeros(CoeffMat.shape[0])
+    for i in range(CoeffMat.shape[0]):
+        ac_coeff[i] = CoeffMat[i, 1]
+    acdpcm = np.zeros(CoeffMat.shape[0])
+    acdpcm[0] = ac_coeff[0]
+    for i in range(1, CoeffMat.shape[0]):
+        acdpcm[i] = ac_coeff[i] - ac_coeff[i - 1]
+    return ac_coeff, acdpcm
+
+def huffmanCoding(data):
+    l = list(set(data))
+    huffman_dict = dict(zip(l, [0] * len(l)))
+    for i in range(len(data)):
+        huffman_dict[data[i]] += 1
+    codec = HuffmanCodec.from_frequencies(huffman_dict)
+    encode = codec.encode(data)
+    length = len(encode)
+    return encode, length
+
 
 def main():
     desc = 'Showcase of image processing techniques in MPEG encoder/decoder framework.'
@@ -441,6 +489,7 @@ def main():
     frames, width, height = extractFrames(filepath, f1, f2)
     num = f2 - f1 + 1
 
+    video = cv.VideoWriter('output.avi', cv.VideoWriter_fourcc(*'XVID'), num, (width, height))
     for frame_num in range(1, num):
         ref = frames[frame_num - 1]
         curr = frames[frame_num]
@@ -476,6 +525,10 @@ def main():
             # Extract DC and AC coefficients; these would be transmitted to the decoder in a real MPEG
             # encoder/decoder framework.
             yCoeffMat = extractCoefficients(yQuant, width, height)
+            y_dc, y_dcdpcm = getDC(yCoeffMat)
+            encode, length = huffmanCoding(y_dcdpcm)
+            # print(encode)
+            # print(length)
             cbCoeffMat = extractCoefficients(cbQuant, width // 2, height // 2)
             crCoeffMat = extractCoefficients(crQuant, width // 2, height // 2)
 
@@ -502,6 +555,7 @@ def main():
             plt.figure(figsize=(10, 10))
             plt.subplot(1, 2, 1).set_title('Original I-frame'), plt.imshow(iframeOrig)
             plt.subplot(1, 2, 2).set_title('Reconstructed I-frame'), plt.imshow(iframeRecon)
+            video.write(iframeRecon)
             plt.show()
 
         # Do motion estimatation using the I-frame as the reference frame for the current frame in the loop.python mpeg.py --file 'walk_qcif.avi' --extract 6 10
@@ -571,6 +625,8 @@ def main():
         plt.subplot(2, 2, 4).set_title('Motion Vectors'), plt.quiver(coordMat[0, :], coordMat[1, :], coordMat[2, :],
                                                                      coordMat[3, :])
         plt.show()
+        recon = cv.cvtColor(img_rgb, cv.COLOR_RGB2BGR)
+        video.write(recon)
 
 
 if __name__ == '__main__':
