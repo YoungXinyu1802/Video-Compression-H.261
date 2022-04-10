@@ -447,21 +447,18 @@ def getDC(CoeffMat):
         dcdpcm[i] = dc_coeff[i] - dc_coeff[i - 1]
     return dc_coeff, dcdpcm
 
-# hasn't finished
 def getAC(CoeffMat):
     '''
     Computes AC coefficients for a given YCbCr component.
     :param yCoeffMat: YCbCr component.
     :return: AC coefficients.
     '''
-    ac_coeff = np.zeros(CoeffMat.shape[0])
+    ac_coeff = []
     for i in range(CoeffMat.shape[0]):
-        ac_coeff[i] = CoeffMat[i, 1]
-    acdpcm = np.zeros(CoeffMat.shape[0])
-    acdpcm[0] = ac_coeff[0]
-    for i in range(1, CoeffMat.shape[0]):
-        acdpcm[i] = ac_coeff[i] - ac_coeff[i - 1]
-    return ac_coeff, acdpcm
+        block = [x for x in CoeffMat[i, 1:] if x != 0]
+        ac_coeff.extend(block)
+        ac_coeff.append(0)
+    return ac_coeff
 
 def huffmanCoding(data):
     l = list(set(data))
@@ -473,6 +470,17 @@ def huffmanCoding(data):
     length = len(encode)
     return encode, length
 
+def codeLength(CoeffMat):
+    '''
+    Computes the length of the huffman code for a given YCbCr component.
+    :param yCoeffMat: YCbCr component.
+    :return: length of the huffman code.
+    '''
+    dc_coeff, dcdpcm = getDC(CoeffMat)
+    ac_coeff = getAC(CoeffMat)
+    dc_encode, dc_length = huffmanCoding(dcdpcm)
+    ac_encode, ac_length = huffmanCoding(ac_coeff)
+    return dc_length + ac_length
 
 def main():
     desc = 'Showcase of image processing techniques in MPEG encoder/decoder framework.'
@@ -525,12 +533,24 @@ def main():
             # Extract DC and AC coefficients; these would be transmitted to the decoder in a real MPEG
             # encoder/decoder framework.
             yCoeffMat = extractCoefficients(yQuant, width, height)
-            y_dc, y_dcdpcm = getDC(yCoeffMat)
-            encode, length = huffmanCoding(y_dcdpcm)
+            dc_y, dpcm_y = getDC(yCoeffMat)
+            ac_y = getAC(yCoeffMat)
+            dcencode_y, dc_length_y = huffmanCoding(dpcm_y)
+            acencode_y, aclength_y = huffmanCoding(ac_y)
             # print(encode)
             # print(length)
             cbCoeffMat = extractCoefficients(cbQuant, width // 2, height // 2)
+            dc_cb, dpcm_cb = getDC(cbCoeffMat)
+            ac_cb = getAC(cbCoeffMat)
+            dcencode_cb, dc_length_cb = huffmanCoding(dpcm_cb)
+            acencode_cb, aclength_cb = huffmanCoding(ac_cb)
             crCoeffMat = extractCoefficients(crQuant, width // 2, height // 2)
+            dc_cr, dpcm_cr = getDC(crCoeffMat)
+            ac_cr = getAC(crCoeffMat)
+            dcencode_cr, dc_length_cr = huffmanCoding(dpcm_cr)
+            acencode_cr, aclength_cr = huffmanCoding(ac_cr)
+            total_length = dc_length_y + dc_length_cb + dc_length_cr + aclength_y + aclength_cb + aclength_cr
+            print("Compress_ratio:", total_length * 8 / (width * height * 3))
 
             # Perform inverse quantization.
             yIQuant = quantize(yQuant, width, height, isInv=True)
