@@ -6,6 +6,7 @@ from math import sqrt, cos, pi
 from scipy.fft import dctn, idctn
 import matplotlib.pyplot as plt
 from dahuffman import HuffmanCodec
+import math
 
 
 # Options for debugging.
@@ -29,6 +30,10 @@ def extractFrames(video, f1, f2):
     height = int(cap.get(4))
     nframes = int(cap.get(7))
     ret = True
+    width = 8 * math.ceil(width / 8)
+    height = 8 * math.ceil(height / 8)
+    print("original width, original height: ", width, height)
+    print('#'*80)
 
     # Until we reach the end of the sequence, read each frame and append to list.
     while ret:
@@ -37,8 +42,12 @@ def extractFrames(video, f1, f2):
 
     # Extract the specific frames dependant on the input.
     extracted_frames = [frames[idx] for idx in range(f1 - 1, f2)]
+    for f in extracted_frames:
+        f = cv.resize(f, (width, height))
     print(f'Read {nframes} frames from input video file, extracting only {f2 - f1 + 1} frames.')
 
+    print('width, height', width, height)
+    print("#" * 80)
     return extracted_frames, width, height
 
 
@@ -235,7 +244,6 @@ def quantize(mat, width, height, isInv=False, isLum=True):
 
     return quantized
 
-
 def extractCoefficients(mat, width, height):
     '''
     Extracts the DC and AC coefficients of the quantized 8x8 block within a frame and places it in a single row of a
@@ -247,86 +255,61 @@ def extractCoefficients(mat, width, height):
     '''
     numRows = (height // 8) * (width // 8)  # No. of rows in coefficient matrix is number of 8x8 blocks in the image.
     coeffMat = np.zeros((numRows, 64))
-    matIdx = 0
+    matIdx = np.array([0,  1,  5,  6, 14, 15, 27, 28,
+                    2,  4,  7, 13, 16, 26, 29, 42,
+                    3,  8, 12, 17, 25, 30, 41, 43,
+                    9, 11, 18, 24, 31, 40, 44, 53,
+                    10, 19, 23, 32, 39, 45, 52, 54,
+                    20, 22, 33, 38, 46, 51, 55, 60,
+                    21, 34, 37, 47, 50, 56, 59, 61,
+                    35, 36, 48, 49, 57, 58, 62, 63])
 
     for N, M in product(range(0, height, 8), range(0, width, 8)):
-        if N >= height // 8 or M >= width // 8:
+        if N >= height // 8*8 or M >= width // 8*8:
             break
-        coeffBlock = np.zeros(64, )  # Vector representing a single row of the coefficient matrix.
-        prevCoord = np.zeros((2, 64))  # Matrix used to store the coordinates of the previous square in the 8x8
-        # block according the zigzag pattern.
+        num = N // 8 * width // 8 + M // 8
 
-        # Start from top left of 8x8 block.
-        rows = N + 1
-        cols = M + 1
+        rows = N
+        cols = M
 
         for i in range(64):
-            coeffBlock[i] = mat[rows, cols]  # Save current coordinate in the vector.
-
-            # Save current coordinates for next loop.
-            prevCoord[0, i] = rows
-            prevCoord[1, i] = cols
-
-            # TOP LEFT: move to the right.
-            if rows == N and cols == M:
-                cols += 1
-            # TOP RIGHT: move down and to the left.
-            elif rows == N and cols == M + 7:
-                rows += 1
-                cols -= 1
-            # BOTTOM LEFT: move to the right.
-            elif rows == N + 7 and cols == M:
-                cols += 1
-            # ALONG TOP ROW: if previous position along top row, move down and to the left. Else, move to the right.
-            elif rows == N:
-                if prevCoord[0, i - 1] == N:
-                    rows += 1
-                    cols -= 1
-                else:
-                    cols += 1
-            # ALONG BOTTOM ROW: if previous position along bottom row, move up and to the right. Else, move to the
-            # right.
-            elif rows == N + 7:
-                if prevCoord[0, i - 1] == N + 7:
-                    rows -= 1
-                    cols += 1
-                else:
-                    cols += 1
-            # ALONG LEFTMOST COLUMN: if previous position along leftmost column, move up and to the right. Else,
-            # move down.
-            elif cols == M:
-                if prevCoord[1, i - 1] == M:
-                    rows -= 1
-                    cols += 1
-                else:
-                    rows += 1
-            # ALONG RIGHTMOST COLUMN: if previously along rightmost column, move down and to the left. Else, move down.
-            elif cols == M + 7:
-                if prevCoord[1, i - 1] == M + 7:
-                    rows += 1
-                    cols -= 1
-                else:
-                    rows += 1
-            # ELSE: if previous position was one row down, we are moving up and right. Else, we are moving down and
-            # left.
-            elif (cols > M | cols < M + 7) and (rows > N | rows < N + 7):
-                if prevCoord[0, i - 1] == rows + 1:
-                    rows -= 1
-                    cols += 1
-                else:
-                    rows += 1
-                    cols -= 1
-            elif rows == N + 7 and cols == M + 7:
-                break
-
-        # Save coefficients for one 8x8 block as a row in the coefficent matrix.
-        coeffVect = np.zeros(64)
-        coeffVect[:] = coeffBlock
-        coeffMat[matIdx, :] = coeffVect
-        matIdx += 1
-
+            coeffMat[num][matIdx[i]] = mat[rows][cols]
+            cols = cols + 1
+            if cols == M + 8:
+                rows = rows + 1
+                cols = M
     return coeffMat
 
+def IextractCoefficients(coeffMat,width,height):
+    """
+    :Reconstruct block
+    :param width: width of frame.
+    :param height: height of frame.
+    """
+    blockMat = np.zeros((height, width))
+    matIdx = np.array([0,  1,  5,  6, 14, 15, 27, 28,
+                    2,  4,  7, 13, 16, 26, 29, 42,
+                    3,  8, 12, 17, 25, 30, 41, 43,
+                    9, 11, 18, 24, 31, 40, 44, 53,
+                    10, 19, 23, 32, 39, 45, 52, 54,
+                    20, 22, 33, 38, 46, 51, 55, 60,
+                    21, 34, 37, 47, 50, 56, 59, 61,
+                    35, 36, 48, 49, 57, 58, 62, 63])
+    for N, M in product(range(0, height, 8), range(0, width, 8)):
+        if N >= height // 8*8 or M >= width // 8*8:
+            break
+        num = N // 8 * width // 8 + M // 8
+
+        rows = N
+        cols = M
+
+        for i in range(64):
+            blockMat[rows][cols] = coeffMat[num][matIdx[i]]
+            cols = cols + 1
+            if cols == M + 8:
+                rows = rows + 1
+                cols = M
+    return blockMat
 
 def motionEstimation(y_curr, y_ref, cr_ref, cb_ref, width, height):
     '''
@@ -441,34 +424,74 @@ def getDC(CoeffMat):
     dc_coeff = np.zeros(CoeffMat.shape[0])
     for i in range(CoeffMat.shape[0]):
         dc_coeff[i] = CoeffMat[i, 0]
+    
     dcdpcm = np.zeros(CoeffMat.shape[0])
     dcdpcm[0] = dc_coeff[0]
     for i in range(1, CoeffMat.shape[0]):
         dcdpcm[i] = dc_coeff[i] - dc_coeff[i - 1]
     return dc_coeff, dcdpcm
 
+
 def getAC(CoeffMat):
     '''
-    Computes AC coefficients for a given YCbCr component.
+    Computes AC coefficients for a given YCbCr component using RLE
     :param yCoeffMat: YCbCr component.
     :return: AC coefficients.
     '''
     ac_coeff = []
     for i in range(CoeffMat.shape[0]):
-        block = [x for x in CoeffMat[i, 1:] if x != 0]
-        ac_coeff.extend(block)
-        ac_coeff.append(0)
+        "using the run length encoding algorithm"
+        cnt = 0
+        for x in CoeffMat[i, 1:]:
+            if x == 0:
+                cnt += 1
+            if x != 0:
+                ac_coeff.append((cnt, x))
+                cnt = 0
+        ac_coeff.append((0, 0))
+            
     return ac_coeff
 
+
 def huffmanCoding(data):
-    l = list(set(data))
-    huffman_dict = dict(zip(l, [0] * len(l)))
-    for i in range(len(data)):
-        huffman_dict[data[i]] += 1
-    codec = HuffmanCodec.from_frequencies(huffman_dict)
+    codec = HuffmanCodec.from_data(data)
     encode = codec.encode(data)
     length = len(encode)
-    return encode, length
+    return codec, encode
+
+def MatDecode(dc_codec, dc_encode, ac_codec, ac_encode, num):
+    '''
+    Decodes DC and AC coefficients.
+    :param dc_codec: DC Huffman codec.
+    :param dc_encode: DC Huffman encoded coefficients.
+    :param ac_codec: AC Huffman codec.
+    :param ac_encode: AC Huffman encoded coefficients.
+    :return: Decoded DC and AC coefficients.
+    '''
+    dc_decode = HuffmanCodec.decode(dc_codec, dc_encode)
+    dc = np.zeros((num, ))
+    dc[0] = dc_decode[0]
+    for i in range(1, num):
+        dc[i] = dc[i - 1] + dc_decode[i]
+
+    ac_decode = HuffmanCodec.decode(ac_codec, ac_encode)
+    Mat = np.zeros((num, 64))
+    Mat[:, 0] = dc
+    block = 0
+    cur = 1
+    for ac in ac_decode:
+        if ac == (0, 0):
+            Mat[block, cur : 64] = 0
+            block += 1
+            cur = 1
+        else:
+            cnt = ac[0]
+            Mat[block, cur : cur + cnt] = 0
+            Mat[block, cur] = ac[1]
+            cur += cnt + 1
+        
+    return Mat
+
 
 def codeLength(CoeffMat):
     '''
@@ -532,27 +555,36 @@ def main():
 
             # Extract DC and AC coefficients; these would be transmitted to the decoder in a real MPEG
             # encoder/decoder framework.
+            total_length = 0
             yCoeffMat = extractCoefficients(yQuant, width, height)
-            dc_y, dpcm_y = getDC(yCoeffMat)
+            dc_y, dpcm_y = getDC(yCoeffMat)      
             ac_y = getAC(yCoeffMat)
-            dcencode_y, dc_length_y = huffmanCoding(dpcm_y)
-            acencode_y, aclength_y = huffmanCoding(ac_y)
-            # print(encode)
-            # print(length)
+            dccodec_y, dcencode_y = huffmanCoding(dpcm_y)
+            dpcm_recon = HuffmanCodec.decode(dccodec_y, dcencode_y)
+            accodec_y, acencode_y = huffmanCoding(ac_y)
+            
+            total_length += len(dcencode_y) + len(acencode_y)
             cbCoeffMat = extractCoefficients(cbQuant, width // 2, height // 2)
             dc_cb, dpcm_cb = getDC(cbCoeffMat)
             ac_cb = getAC(cbCoeffMat)
-            dcencode_cb, dc_length_cb = huffmanCoding(dpcm_cb)
-            acencode_cb, aclength_cb = huffmanCoding(ac_cb)
+            dccodec_cb, dcencode_cb = huffmanCoding(dpcm_cb)
+            accodec_cb, acencode_cb = huffmanCoding(ac_cb)
+            total_length += len(dcencode_cb) + len(acencode_cb)
+
             crCoeffMat = extractCoefficients(crQuant, width // 2, height // 2)
             dc_cr, dpcm_cr = getDC(crCoeffMat)
             ac_cr = getAC(crCoeffMat)
-            dcencode_cr, dc_length_cr = huffmanCoding(dpcm_cr)
-            acencode_cr, aclength_cr = huffmanCoding(ac_cr)
-            total_length = dc_length_y + dc_length_cb + dc_length_cr + aclength_y + aclength_cb + aclength_cr
-            print("Compress_ratio:", total_length * 8 / (width * height * 3))
+            dccodec_cr, dcencode_cr = huffmanCoding(dpcm_cr)
+            accodec_cr, acencode_cr= huffmanCoding(ac_cr)
+            total_length += len(dcencode_cr) + len(acencode_cr)
+            
+            print("Compress_ratio:", total_length / (width * height * 3))
 
             # Perform inverse quantization.
+            # decoding
+            YMatRecon = MatDecode(dccodec_y, dcencode_y, accodec_y, acencode_y, yCoeffMat.shape[0])
+            YQuantRecon = IextractCoefficients(YMatRecon, width, height)
+
             yIQuant = quantize(yQuant, width, height, isInv=True)
             cbIQuant = quantize(cbQuant, width // 2, height // 2, isInv=True, isLum=False)
             crIQuant = quantize(crQuant, width // 2, height // 2, isInv=True, isLum=False)
