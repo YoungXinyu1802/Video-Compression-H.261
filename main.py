@@ -468,10 +468,14 @@ def main():
     crIFrame = np.zeros((height // 2, width // 2))
     
     Frame_result = []
+    i = 0
+    l_comp = []
     for frame_num in range(num):
         if frame_num % 2 == 0:
             curr = frames[frame_num]
-            img_rgb = cv.cvtColor(frames[frame_num], cv.COLOR_BGR2RGB)
+            # img_rgb = cv.cvtColor(frames[frame_num], cv.COLOR_BGR2RGB)
+            if curr is None:
+                continue
             yCurr, crCurr, cbCurr = BGR2YCRCB(curr)
             cbCurr, crCurr = subsample_420(cbCurr, crCurr, width, height)
             #print(yCurr)
@@ -512,14 +516,14 @@ def main():
             dccodec_cr, dcencode_cr = huffmanCoding(dpcm_cr)
             accodec_cr, acencode_cr= huffmanCoding(ac_cr)
             total_length += len(dcencode_cr) + len(acencode_cr)
-            
-            print("Compress_ratio:", total_length / (width * height * 3))
+
+            # print("Compress_ratio:", total_length / (width * height * 3))
+            l_comp.append((width * height * 3) / total_length)
 
             # Perform inverse quantization.
             # decoding
             YMatRecon = MatDecode(dccodec_y, dcencode_y, accodec_y, acencode_y, yCoeffMat.shape[0])
             YQuantRecon = IextractCoefficients(YMatRecon, width, height)
-            print(YQuantRecon == yQuant)
 
             CrMatRecon = MatDecode(dccodec_cr,dcencode_cr,accodec_cr,acencode_cr,crCoeffMat.shape[0])
             CrQuantRecon = IextractCoefficients(CrMatRecon,width//2,height//2)
@@ -548,7 +552,9 @@ def main():
             video.write(re_rgb)
         else:
             curr = frames[frame_num]
-            img_rgb = cv.cvtColor(frames[frame_num], cv.COLOR_BGR2RGB)
+            if curr is None:
+                continue
+            # img_rgb = cv.cvtColor(frames[frame_num], cv.COLOR_BGR2RGB)
             yCurr, crCurr, cbCurr = BGR2YCRCB(curr)
             cbCurr, crCurr = subsample_420(cbCurr, crCurr, width, height)
 
@@ -596,7 +602,10 @@ def main():
             dccodec_cr, dcencode_cr = huffmanCoding(dpcm_cr)
             accodec_cr, acencode_cr= huffmanCoding(ac_cr)
             total_length += len(dcencode_cr) + len(acencode_cr)
-                        # Perform inverse quantization.
+            # print("Compress_ratio:", total_length / (width * height * 3))
+            l_comp.append((width * height * 3) / total_length)
+            
+            # Perform inverse quantization.
             # decoding
             YMatRecon = MatDecode(dccodec_y, dcencode_y, accodec_y, acencode_y, yCoeffMat.shape[0])
             YQuantRecon = IextractCoefficients(YMatRecon, width, height)
@@ -622,12 +631,37 @@ def main():
             cbRcn = cbIDCT.astype(np.uint8) + cbPred.astype(np.uint8)
             crRcn = crIDCT.astype(np.uint8) + crPred.astype(np.uint8)
 
+            i += 1
             re_rgb = YCRCB2RGB(yRcn.astype(np.uint8),cbRcn.astype(np.uint8),crRcn.astype(np.uint8),width,height)
+            diffMat = YCRCB2RGB(yDiff, cbDiff, crDiff, width, height)
+            pred_rgb = YCRCB2RGB(yTmp, cbTmp, crTmp, width, height)
+            plt.figure(figsize=(10, 10))
+            curr_plt = cv.cvtColor(curr, cv.COLOR_BGR2RGB)
+            re_rgb_plt = cv.cvtColor(re_rgb, cv.COLOR_BGR2RGB)
+            pred_rgb_plt = cv.cvtColor(pred_rgb, cv.COLOR_BGR2RGB)
+            diffMat_plt = cv.cvtColor(pred_rgb_plt - re_rgb_plt, cv.COLOR_BGR2RGB)
+            plt.subplot(2, 2, 1).set_title('Current Image'), plt.imshow(curr_plt)
+            plt.subplot(2, 2, 2).set_title('Reconstructed Image'), plt.imshow(re_rgb_plt)
+            plt.subplot(2, 2, 3).set_title('Predict Image'), plt.imshow(pred_rgb_plt)
+            plt.subplot(2, 2, 4).set_title('Motion Vectors'), plt.quiver(coordMat[0, :], coordMat[1, :], coordMat[2, :],
+                                                                        coordMat[3, :])
+            # plt.show()     
+            # if i < 10:
+            plt.savefig('result/train_'+str(i)+'.png')     
+            plt.close()
+
+            
+            
             #plt.figure(figsize=(10, 10))
             #plt.imshow(re_rgb)
             #plt.show()
             #re_img = cv.cvtColor(re_rgb,cv.COLOR_RGB2BGR)
             video.write(re_rgb)
+    # plt.set_title("compression ratio")
+    plt.plot(l_comp)
+    plt.show()
+    compression = sum(l_comp) / len(l_comp)
+    print("compression_ratio: ", compression)
 
 
 if __name__ == '__main__':
