@@ -13,128 +13,78 @@ import math
 # np.set_printoptions(threshold=np.inf)
 
 
-def extractFrames(video):
+def extractYUV(file_name, height, width, start_frame, end_frame):
+    """
+    Extracts the Y, U, and V components of the frames in the given video file.
+    :param file_name: filepath of video file to extract frames from.
+    :param height: height of video.
+    :param width: width of video.
+    :param start_frame: first frame to be extracted.
+    :param end_frame: final frame to be extracted.
+    :
+    """
+
+    fp = open(file_name, 'rb')
+    fp.seek(0, 2)  # Seek to end of file
+    fp_end = fp.tell()  # Find the file size
+
+    frame_size = height * width * 3 // 2  # Size of a frame in bytes
+    num_frame = fp_end // frame_size  # Number of frames in the video
+    print("This yuv file has {} frame imgs!".format(num_frame))
+    fp.seek(frame_size * start_frame, 0)  # Seek to the start of the first frame
+    print("Extract imgs start frame is {}!".format(start_frame + 1))
+
+    YUV = []
+    for i in range(start_frame, end_frame):
+        yuv = np.zeros(shape=frame_size, dtype='uint8', order='C')
+        for j in range(frame_size):
+            yuv[j] = ord(fp.read(1))  # Read one byte from the file
+
+        img = yuv.reshape((height * 3 // 2, width)).astype('uint8')  # Reshape the array    
+        
+        # YUV420
+        y = np.zeros((height, width), dtype='uint8', order='C')
+        u = np.zeros((height // 2) * (width // 2), dtype='uint8', order='C')
+        v = np.zeros((height // 2) * (width // 2), dtype='uint8', order='C')
+        
+        # assignment
+        y = img[:height, :width]
+        u = img[height : height * 5 // 4, :width]
+        v = img[height * 5 // 4 : height * 3 // 2, :width]
+
+        # reshape
+        u = u.reshape((height // 2, width // 2)).astype('uint8')
+        v = v.reshape((height // 2, width // 2)).astype('uint8')
+
+        # save
+        YUV.append({'y': y, 'u': u, 'v': v})
+
+        print("Extract frame {}".format(i + 1))
+
+    fp.close()
+    print("job done!")
+    return YUV, num_frame
+
+def YUV2RGB(y, u, v, height, width):
     '''
-    Extracts a number of BGR frames specifically from the f1-th to the f2-th frame of the given video file.
-    :param video: filepath of video file to extract frames from.
-    :param f1: the first frame to be extracted.
-    :param f2: the final frame to be extracted.
-    :return: a list of the extracted BGR frames, as well as with the pixel dimensions of the video.
-    '''
-    # Capture video and initialize list.
-    cap = cv.VideoCapture(video)
-    frames = []
-
-    # Get auxiliary information about video.
-    width = int(cap.get(3))
-    height = int(cap.get(4))
-    nframes = int(cap.get(7))
-    fps = cap.get(cv.CAP_PROP_FPS)
-    ret = True
-    width = 8 * math.ceil(width / 8)
-    height = 8 * math.ceil(height / 8)
-    print("original width, original height: ", width, height)
-    print('#'*80)
-
-    # Until we reach the end of the sequence, read each frame and append to list.
-    while ret:
-        ret, frame = cap.read()
-        frames.append(frame)
-
-    # Extract the specific frames dependant on the input.
-    extracted_frames = frames
-    #for f in extracted_frames:
-    #    f = cv.resize(f, (width, height))
-    #print(f'Read {nframes} frames from input video file, extracting only {f2 - f1 + 1} frames.')
-
-    print('width, height', width, height)
-    print("#" * 80)
-    return extracted_frames, nframes, width, height, fps
-
-
-def BGR2YCRCB(image):
-    '''
-    Converts an image from BGR to YCrCb format.
-    :param image: input image to be converted.
-    :return: split y, cr, and cb components of the converted YCrCb image.
-    '''
-    ycrcb = cv.cvtColor(image, cv.COLOR_BGR2YCrCb)
-    y, cr, cb = cv.split(ycrcb)
-
-    return y, cr, cb
-
-
-def subsample_420(cb, cr, width, height):
-    '''
-    Subsamples the Cb and Cr component images to 4:2:0 format.
-    :param cb: Cb component of YCrCb image.
-    :param cr: Cr component of YCrCb image.
-    :param width: width of image.
-    :param height:height of image.
-    :return: 4:2:0 subsampled Cb and Cr components.
-    '''
-    cb_sub = cb[0:height:2, 0:width:2]
-    cr_sub = cr[0:height:2, 0:width:2]
-
-    return cb_sub, cr_sub
-
-
-def linearInterpolate(mat, width, height):
-    '''
-    Upsamples an image from 4:2:0 format to be the size of the original image using linear interpolation.
-    :param mat: input image matrix.
-    :param width: width of matrix.
-    :param height: height of matrix.
-    :return: linearly interpolated upsampled image.
-    '''
-    linMat = np.zeros((height, width))
-    # Fill linMat with subsampled values with 'empty' value between each subsampled value to allow for averaging later.
-    linMat[0:height:2, 0:width:2] = mat[0:height // 2, 0:width // 2]
-
-    # This fills the 'empty' pixel values in odd rows.
-    for cols, rows in product(range(1, width, 2), range(0, height, 2)):
-        # If an edge is reached, fill with previous value. Otherwise take the average of the neighbors.
-        if cols == width - 1:
-            linMat[rows, cols] = linMat[rows, cols - 1]
-        else:
-            linMat[rows, cols] = (linMat[rows, cols - 1]) / 2 + (linMat[rows, cols + 1]) / 2
-
-    # This fills the 'empty' pixel values in even rows.
-    for cols, rows in product(range(width), range(1, height, 2)):
-        if rows == height - 1:
-            linMat[rows, cols] = linMat[rows - 1, cols]
-        else:
-            linMat[rows, cols] = (linMat[rows - 1, cols]) / 2 + (linMat[rows + 1, cols]) / 2
-
-    return linMat
-
-
-def YCRCB2RGB(y, cr, cb, width, height, upTrue=True):
-    '''
-    Converts an image from YCrCb to RGB format.
+    Converts YCbCr to RGB.
     :param y: Y component.
-    :param cr: Cr component.
-    :param cb: Cb component.
-    :param width: width of image.
+    :param u: U component.
+    :param v: V component.
     :param height: height of image.
-    :param upTrue: flag indicating whether the image needs to be upsampled from 4:2:0 format.
-    :return: reconstructed RGB image.
+    :param width: width of image.
+    :return: RGB components.
     '''
-    # Upsample image if needed.
-    if upTrue:
-        cr = linearInterpolate(cr, width, height).astype(np.uint8)
-        cb = linearInterpolate(cb, width, height).astype(np.uint8)
+    yuv = np.zeros((height * 3 // 2, width), dtype='uint8', order='C')
+    y = y.reshape((height, width))
+    u = u.reshape((-1, width))
+    v = v.reshape((-1, width))
+    yuv[:height, :width] = y
+    yuv[height:height * 5 // 4, :width] = u
+    yuv[height * 5 // 4:height * 3 // 2, :width] = v
+    rgb = cv.cvtColor(yuv, cv.COLOR_YUV2BGR_I420)  
+    return rgb
 
-    y = y.astype(np.uint8)
-    cr = cr.astype(np.uint8)
-    cb = cb.astype(np.uint8)
-
-
-
-    reconstructed_ycrcb = cv.merge((y, cr, cb))
-    reconstructed_rgb = cv.cvtColor(reconstructed_ycrcb, cv.COLOR_YCrCb2RGB)
-
-    return reconstructed_rgb
 
 
 def quantize(mat, width, height, isInv=False, isLum=True):
@@ -266,10 +216,10 @@ def motionEstimation(y_curr, y_ref, cr_ref, cb_ref, width, height):
     :param height: height of frame.
     :return: YCrCb components of predicted frame, coordinate matrix for quiver plot, and motion vector matrices.
     '''
-    MV_arr = MV_subarr = np.zeros((2, 499)).astype(int)
+    MV_arr = MV_subarr = np.zeros((2, 1999)).astype(int)
     y_pred = np.zeros((height, width))
     cb_pred = cr_pred = np.zeros((height // 2, width // 2))
-    coordMat = np.zeros((4, 499))
+    coordMat = np.zeros((4, 1999))
     mv_row = mv_col = 0
 
     # Search window sizes depend on where the macroblock is in the frame; i.e. at an edge, column/row, or in the middle.
@@ -457,9 +407,14 @@ def main():
     #args = parser.parse_args()
 
     # Get arguments
-    filepath = 'train.avi'
+    filepath = 'videoSRC19_1920x1080_30.yuv'
+    width, height, fps = 1920, 1080, 30
+    start_frame = 0
+    end_frame = 1
 
-    frames,num,width, height, fps = extractFrames(filepath) #allframe,num,width,height
+    frames, num_frame = extractYUV(filepath, height, width, start_frame, end_frame)
+
+    # frames,num,width, height, fps = extractFrames(filepath) #allframe,num,width,height
 
     video = cv.VideoWriter('output.avi', cv.VideoWriter_fourcc(*'XVID'), fps, (width, height))
     
@@ -470,23 +425,33 @@ def main():
     Frame_result = []
     i = 0
     l_comp = []
-    for frame_num in range(num):
+    for frame_num in range(len(frames)):
         if frame_num % 2 == 0:
             curr = frames[frame_num]
             # img_rgb = cv.cvtColor(frames[frame_num], cv.COLOR_BGR2RGB)
             if curr is None:
                 continue
-            yCurr, crCurr, cbCurr = BGR2YCRCB(curr)
-            cbCurr, crCurr = subsample_420(cbCurr, crCurr, width, height)
+            # yCurr, crCurr, cbCurr = BGR2YCRCB(curr)
+            # cbCurr, crCurr = subsample_420(cbCurr, crCurr, width, height)
             #print(yCurr)
             
-            yIFrame = yCurr
-            cbIFrame = cbCurr
-            crIFrame = crCurr
+            # yIFrame = yCurr
+            # cbIFrame = cbCurr
+            # crIFrame = crCurr
             
-            yDCT = dctn(yCurr)
-            cbDCT = dctn(cbCurr)
-            crDCT = dctn(crCurr)
+            y, u, v = curr['y'], curr['u'], curr['v']
+            # cv.imshow('y', y)
+            # cv.imshow('u', u)
+            # cv.imshow('v', v)
+            # cv.waitKey(1)
+            rgb = YUV2RGB(y, u, v, height, width)
+            # cv.imshow('rgb', rgb)
+            # cv.waitKey(1)
+
+
+            yDCT = dctn(y)
+            cbDCT = dctn(u)
+            crDCT = dctn(v)
 
             yQuant = quantize(yDCT, width, height)
             cbQuant = quantize(cbDCT, width // 2, height // 2, isLum=False)
@@ -541,10 +506,12 @@ def main():
             cbIDCT = idctn(cbIQuant)
             crIDCT = idctn(crIQuant)
 
+
             #print(yIDCT)
             #print(yIDCT-yCurr)
 
-            re_rgb = YCRCB2RGB(yIDCT.astype(np.uint8),cbIDCT.astype(np.uint8),crIDCT.astype(np.uint8),width,height)
+            re_rgb = YUV2RGB(yIDCT.astype(np.uint8),cbIDCT.astype(np.uint8),crIDCT.astype(np.uint8),height, width)
+            cv.imshow('re_rgb', re_rgb)
             #plt.figure(figsize=(10, 10))
             #plt.imshow(re_rgb)
             #plt.show()
@@ -555,8 +522,7 @@ def main():
             if curr is None:
                 continue
             # img_rgb = cv.cvtColor(frames[frame_num], cv.COLOR_BGR2RGB)
-            yCurr, crCurr, cbCurr = BGR2YCRCB(curr)
-            cbCurr, crCurr = subsample_420(cbCurr, crCurr, width, height)
+            yCurr, crCurr, cbCurr = curr['y'], curr['u'], curr['v']
 
             # Do motion estimatation using the I-frame as the reference frame for the current frame in the loop.python mpeg.py --file 'walk_qcif.avi' --extract 6 10
             coordMat, MV_arr, MV_subarr, yPred, cbPred, crPred = motionEstimation(yCurr, yIFrame, crIFrame, cbIFrame, width,height)
@@ -632,9 +598,9 @@ def main():
             crRcn = crIDCT.astype(np.uint8) + crPred.astype(np.uint8)
 
             i += 1
-            re_rgb = YCRCB2RGB(yRcn.astype(np.uint8),cbRcn.astype(np.uint8),crRcn.astype(np.uint8),width,height)
-            diffMat = YCRCB2RGB(yDiff, cbDiff, crDiff, width, height)
-            pred_rgb = YCRCB2RGB(yTmp, cbTmp, crTmp, width, height)
+            re_rgb = YUV2RGB(yRcn.astype(np.uint8),cbRcn.astype(np.uint8),crRcn.astype(np.uint8),height, width)
+            diffMat = YUV2RGB(yDiff, cbDiff, crDiff, width, height)
+            pred_rgb = YUV2RGB(yTmp, cbTmp, crTmp, width, height)
             plt.figure(figsize=(10, 10))
             curr_plt = cv.cvtColor(curr, cv.COLOR_BGR2RGB)
             re_rgb_plt = cv.cvtColor(re_rgb, cv.COLOR_BGR2RGB)
