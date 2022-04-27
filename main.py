@@ -68,7 +68,7 @@ def extractYUV(file_name, height, width, start_frame, end_frame):
 
 def YUV2RGB(y, u, v, height, width):
     '''
-    Converts YCbCr to RGB.
+    Converts YUV to RGB.
     :param y: Y component.
     :param u: U component.
     :param v: V component.
@@ -267,8 +267,8 @@ def motionEstimation(y_curr, y_ref, cr_ref, cb_ref, width, height):
 
 def getDC(CoeffMat):
     '''
-    Computes DC coefficients for a given YCbCr component.
-    :param yCoeffMat: YCbCr component.
+    Computes DC coefficients for a given YUV component.
+    :param CoeffMat: YUV component.
     :return: DC coefficients.
     '''
     dc_coeff = np.zeros(CoeffMat.shape[0])
@@ -281,8 +281,8 @@ def getDC(CoeffMat):
 
 def getAC(CoeffMat):
     '''
-    Computes AC coefficients for a given YCbCr component using RLE
-    :param yCoeffMat: YCbCr component.
+    Computes AC coefficients for a given YUV component using RLE
+    :param CoeffMat: YUV component.
     :return: AC coefficients.
     '''
     ac_coeff = []
@@ -336,6 +336,77 @@ def MatDecode(dc_codec, dc_encode, ac_codec, ac_encode, num):
         
     return Mat
 
+def encode_decode(y, u, v, height, width):
+        # y, u, v = curr['y'], curr['u'], curr['v']
+        rgb = YUV2RGB(y, u, v, height, width)
+
+        yDCT = dctn(y)
+        uDCT = dctn(u)
+        vDCT = dctn(v)
+        print('1: ' + str(datetime.datetime.now()))
+        yQuant = quantize(yDCT, width, height)
+        uQuant = quantize(uDCT, width // 2, height // 2, isLum=False)
+        vQuant = quantize(vDCT, width // 2, height // 2, isLum=False)
+
+        # Extract DC and AC coefficients; these would be transmitted to the decoder in a real MPEG
+        # encoder/decoder framework.
+        total_length = 0
+        print('extractC: ' + str(datetime.datetime.now()))
+        yCoeffMat = extractCoefficients(yQuant, width, height)
+        print('ext_end: ' + str(datetime.datetime.now()))
+        
+        print('dc: ' + str(datetime.datetime.now()))
+        dc_y, dpcm_y = getDC(yCoeffMat)  
+        print('ac: ' + str(datetime.datetime.now()))    
+        ac_y = getAC(yCoeffMat)
+        print('dc_end: ' + str(datetime.datetime.now()))
+        dccodec_y, dcencode_y = huffmanCoding(dpcm_y)
+        accodec_y, acencode_y = huffmanCoding(ac_y)
+        total_length += len(dcencode_y) + len(acencode_y)
+        
+        uCoeffMat = extractCoefficients(uQuant, width // 2, height // 2)
+        dc_u, dpcm_u = getDC(uCoeffMat)
+        ac_u = getAC(uCoeffMat)
+        print('huff1: ' + str(datetime.datetime.now()))
+        dccodec_u, dcencode_u = huffmanCoding(dpcm_u)
+        print('huff2: ' + str(datetime.datetime.now()))
+        accodec_u, acencode_u = huffmanCoding(ac_u)
+        print('huff3: ' + str(datetime.datetime.now()))
+        total_length += len(dcencode_u) + len(acencode_u)
+
+        vCoeffMat = extractCoefficients(vQuant, width // 2, height // 2)
+        dc_v, dpcm_v = getDC(vCoeffMat)
+        ac_v = getAC(vCoeffMat)
+        dccodec_v, dcencode_v = huffmanCoding(dpcm_v)
+        accodec_v, acencode_v= huffmanCoding(ac_v)
+        total_length += len(dcencode_v) + len(acencode_v)
+
+        # print("Compress_ratio:", total_length / (width * height * 3))
+        # l_comp.append((width * height * 3) / total_length)
+
+        # Perform inverse quantization.
+        # decoding
+        YMatRecon = MatDecode(dccodec_y, dcencode_y, accodec_y, acencode_y, yCoeffMat.shape[0])
+        YQuantRecon = IextractCoefficients(YMatRecon, width, height)
+
+        vMatRecon = MatDecode(dccodec_v,dcencode_v,accodec_v,acencode_v,vCoeffMat.shape[0])
+        vQuantRecon = IextractCoefficients(vMatRecon,width//2,height//2)
+
+        uMatRecon = MatDecode(dccodec_u,dcencode_u,accodec_u,acencode_u,uCoeffMat.shape[0])
+        uQuantRecon = IextractCoefficients(uMatRecon,width//2,height//2)
+        
+        # perform inverse quantization
+        yIQuant = quantize(YQuantRecon, width, height, isInv=True)
+        uIQuant = quantize(uQuantRecon, width // 2, height // 2, isInv=True, isLum=False)
+        vIQuant = quantize(vQuantRecon, width // 2, height // 2, isInv=True, isLum=False)
+
+        #perform inverse DCT
+        yIDCT = idctn(yIQuant)
+        uIDCT = idctn(uIQuant)
+        vIDCT = idctn(vIQuant)
+        return yIDCT, uIDCT, vIDCT
+
+
 
 def main():
     #desc = 'Showcase of image processing techniques in MPEG encoder/decoder framework.'
@@ -358,8 +429,8 @@ def main():
     video = cv.VideoWriter('output.avi', cv.VideoWriter_fourcc(*'XVID'), fps, (width, height))
     
     yIFrame = np.zeros((height, width))
-    cbIFrame = np.zeros((height // 2, width // 2))
-    crIFrame = np.zeros((height // 2, width // 2))
+    uIFrame = np.zeros((height // 2, width // 2))
+    vIFrame = np.zeros((height // 2, width // 2))
     
     Frame_result = []
     i = 0
@@ -369,173 +440,41 @@ def main():
             curr = frames[frame_num]
             if curr is None:
                 continue
-            
             y, u, v = curr['y'], curr['u'], curr['v']
-            rgb = YUV2RGB(y, u, v, height, width)
+            yIDCT, uIDCT, vIDCT = encode_decode(y, u, v, height, width)
 
-            yDCT = dctn(y)
-            cbDCT = dctn(u)
-            crDCT = dctn(v)
-            print('1: ' + str(datetime.datetime.now()))
-            yQuant = quantize(yDCT, width, height)
-            print('2: ' + str(datetime.datetime.now()))
-            cbQuant = quantize(cbDCT, width // 2, height // 2, isLum=False)
-            print('3: ' + str(datetime.datetime.now()))
-            crQuant = quantize(crDCT, width // 2, height // 2, isLum=False)
-            print('4: ' + str(datetime.datetime.now()))
-
-            # Extract DC and AC coefficients; these would be transmitted to the decoder in a real MPEG
-            # encoder/decoder framework.
-            total_length = 0
-            print('extractC: ' + str(datetime.datetime.now()))
-            yCoeffMat = extractCoefficients(yQuant, width, height)
-            print('ext_end: ' + str(datetime.datetime.now()))
-            
-            print('dc: ' + str(datetime.datetime.now()))
-            dc_y, dpcm_y = getDC(yCoeffMat)  
-            print('ac: ' + str(datetime.datetime.now()))    
-            ac_y = getAC(yCoeffMat)
-            print('dc_end: ' + str(datetime.datetime.now()))
-            dccodec_y, dcencode_y = huffmanCoding(dpcm_y)
-            accodec_y, acencode_y = huffmanCoding(ac_y)
-            total_length += len(dcencode_y) + len(acencode_y)
-            
-            cbCoeffMat = extractCoefficients(cbQuant, width // 2, height // 2)
-            dc_cb, dpcm_cb = getDC(cbCoeffMat)
-            ac_cb = getAC(cbCoeffMat)
-            print('huff1: ' + str(datetime.datetime.now()))
-            dccodec_cb, dcencode_cb = huffmanCoding(dpcm_cb)
-            print('huff2: ' + str(datetime.datetime.now()))
-            accodec_cb, acencode_cb = huffmanCoding(ac_cb)
-            print('huff3: ' + str(datetime.datetime.now()))
-            total_length += len(dcencode_cb) + len(acencode_cb)
-
-            crCoeffMat = extractCoefficients(crQuant, width // 2, height // 2)
-            dc_cr, dpcm_cr = getDC(crCoeffMat)
-            ac_cr = getAC(crCoeffMat)
-            dccodec_cr, dcencode_cr = huffmanCoding(dpcm_cr)
-            accodec_cr, acencode_cr= huffmanCoding(ac_cr)
-            total_length += len(dcencode_cr) + len(acencode_cr)
-
-            # print("Compress_ratio:", total_length / (width * height * 3))
-            l_comp.append((width * height * 3) / total_length)
-
-            # Perform inverse quantization.
-            # decoding
-            YMatRecon = MatDecode(dccodec_y, dcencode_y, accodec_y, acencode_y, yCoeffMat.shape[0])
-            YQuantRecon = IextractCoefficients(YMatRecon, width, height)
-
-            CrMatRecon = MatDecode(dccodec_cr,dcencode_cr,accodec_cr,acencode_cr,crCoeffMat.shape[0])
-            CrQuantRecon = IextractCoefficients(CrMatRecon,width//2,height//2)
-
-            CbMatRecon = MatDecode(dccodec_cb,dcencode_cb,accodec_cb,acencode_cb,cbCoeffMat.shape[0])
-            CbQuantRecon = IextractCoefficients(CbMatRecon,width//2,height//2)
-           
-            # perform inverse quantization
-            yIQuant = quantize(YQuantRecon, width, height, isInv=True)
-            cbIQuant = quantize(CbQuantRecon, width // 2, height // 2, isInv=True, isLum=False)
-            crIQuant = quantize(CrQuantRecon, width // 2, height // 2, isInv=True, isLum=False)
-
-            #perform inverse DCT
-            yIDCT = idctn(yIQuant)
-            cbIDCT = idctn(cbIQuant)
-            crIDCT = idctn(crIQuant)
-
-
-            #print(yIDCT)
-            #print(yIDCT-yCurr)
-
-            re_rgb = YUV2RGB(yIDCT.astype(np.uint8),cbIDCT.astype(np.uint8),crIDCT.astype(np.uint8),height, width)
+            re_rgb = YUV2RGB(yIDCT.astype(np.uint8),uIDCT.astype(np.uint8),vIDCT.astype(np.uint8),height, width)
             cv.imshow('re_rgb', re_rgb)
-            #plt.figure(figsize=(10, 10))
-            #plt.imshow(re_rgb)
-            #plt.show()
-            #re_img = cv.cvtColor(re_rgb,cv.COLOR_RGB2BGR)
+            cv.waitKey(0)
             video.write(re_rgb)
         else:
             curr = frames[frame_num]
             if curr is None:
                 continue
-            # img_rgb = cv.cvtColor(frames[frame_num], cv.COLOR_BGR2RGB)
-            yCurr, crCurr, cbCurr = curr['y'], curr['u'], curr['v']
+            yCurr, vCurr, uCurr = curr['y'], curr['u'], curr['v']
 
             # Do motion estimatation using the I-frame as the reference frame for the current frame in the loop.python mpeg.py --file 'walk_qcif.avi' --extract 6 10
-            coordMat, MV_arr, MV_subarr, yPred, cbPred, crPred = motionEstimation(yCurr, yIFrame, crIFrame, cbIFrame, width,height)
+            coordMat, MV_arr, MV_subarr, yPred, uPred, vPred = motionEstimation(yCurr, yIFrame, vIFrame, uIFrame, width,height)
 
             yTmp = yPred
-            cbTmp = cbPred
-            crTmp = crPred
+            uTmp = uPred
+            vTmp = vPred
 
             # Get residual frame
             yDiff = yCurr.astype(np.uint8) - yTmp.astype(np.uint8)
-            cbDiff = cbCurr.astype(np.uint8) - cbTmp.astype(np.uint8)
-            crDiff = crCurr.astype(np.uint8) - crTmp.astype(np.uint8)
-            
-            yDCT = dctn(yDiff)
-            cbDCT = dctn(cbDiff)
-            crDCT = dctn(crDiff)
+            uDiff = uCurr.astype(np.uint8) - uTmp.astype(np.uint8)
+            vDiff = vCurr.astype(np.uint8) - vTmp.astype(np.uint8)
 
-            yQuant = quantize(yDCT, width, height)
-            cbQuant = quantize(cbDCT, width // 2, height // 2, isLum=False)
-            crQuant = quantize(crDCT, width // 2, height // 2, isLum=False)
+            yIDCT, uIDCT, vIDCT = encode_decode(yDiff, uDiff, vDiff, height, width)
 
-            # Extract DC and AC coefficients; these would be transmitted to the decoder in a real MPEG
-            # encoder/decoder framework.
-            total_length = 0
-            yCoeffMat = extractCoefficients(yQuant, width, height)
-            dc_y, dpcm_y = getDC(yCoeffMat)      
-            ac_y = getAC(yCoeffMat)
-            dccodec_y, dcencode_y = huffmanCoding(dpcm_y)
-            dpcm_recon = HuffmanCodec.decode(dccodec_y, dcencode_y)
-            accodec_y, acencode_y = huffmanCoding(ac_y)
-            
-            total_length += len(dcencode_y) + len(acencode_y)
-            cbCoeffMat = extractCoefficients(cbQuant, width // 2, height // 2)
-            dc_cb, dpcm_cb = getDC(cbCoeffMat)
-            ac_cb = getAC(cbCoeffMat)
-            dccodec_cb, dcencode_cb = huffmanCoding(dpcm_cb)
-            accodec_cb, acencode_cb = huffmanCoding(ac_cb)
-            total_length += len(dcencode_cb) + len(acencode_cb)
-
-            crCoeffMat = extractCoefficients(crQuant, width // 2, height // 2)
-            dc_cr, dpcm_cr = getDC(crCoeffMat)
-            ac_cr = getAC(crCoeffMat)
-            dccodec_cr, dcencode_cr = huffmanCoding(dpcm_cr)
-            accodec_cr, acencode_cr= huffmanCoding(ac_cr)
-            total_length += len(dcencode_cr) + len(acencode_cr)
-            # print("Compress_ratio:", total_length / (width * height * 3))
-            l_comp.append((width * height * 3) / total_length)
-            
-            # Perform inverse quantization.
-            # decoding
-            YMatRecon = MatDecode(dccodec_y, dcencode_y, accodec_y, acencode_y, yCoeffMat.shape[0])
-            YQuantRecon = IextractCoefficients(YMatRecon, width, height)
-
-            CrMatRecon = MatDecode(dccodec_cr,dcencode_cr,accodec_cr,acencode_cr,crCoeffMat.shape[0])
-            CrQuantRecon = IextractCoefficients(CrMatRecon,width//2,height//2)
-
-            CbMatRecon = MatDecode(dccodec_cb,dcencode_cb,accodec_cb,acencode_cb,cbCoeffMat.shape[0])
-            CbQuantRecon = IextractCoefficients(CbMatRecon,width//2,height//2)
-           
-           #perform inverse quantization
-            yIQuant = quantize(YQuantRecon, width, height, isInv=True)
-            cbIQuant = quantize(CbQuantRecon, width // 2, height // 2, isInv=True, isLum=False)
-            crIQuant = quantize(CrQuantRecon, width // 2, height // 2, isInv=True, isLum=False)
-
-            #perform inverse DCT
-            yIDCT = idctn(yIQuant)
-            cbIDCT = idctn(cbIQuant)
-            crIDCT = idctn(crIQuant)
-
-            
             yRcn = yIDCT.astype(np.uint8) + yPred.astype(np.uint8)
-            cbRcn = cbIDCT.astype(np.uint8) + cbPred.astype(np.uint8)
-            crRcn = crIDCT.astype(np.uint8) + crPred.astype(np.uint8)
+            uRcn = uIDCT.astype(np.uint8) + uPred.astype(np.uint8)
+            vRcn = vIDCT.astype(np.uint8) + vPred.astype(np.uint8)
 
             i += 1
-            re_rgb = YUV2RGB(yRcn.astype(np.uint8),cbRcn.astype(np.uint8),crRcn.astype(np.uint8),height, width)
-            diffMat = YUV2RGB(yDiff, cbDiff, crDiff, width, height)
-            pred_rgb = YUV2RGB(yTmp, cbTmp, crTmp, width, height)
+            re_rgb = YUV2RGB(yRcn.astype(np.uint8),uRcn.astype(np.uint8),vRcn.astype(np.uint8),height, width)
+            diffMat = YUV2RGB(yDiff, uDiff, vDiff, width, height)
+            pred_rgb = YUV2RGB(yTmp, uTmp, vTmp, width, height)
             plt.figure(figsize=(10, 10))
             curr_plt = cv.cvtColor(curr, cv.COLOR_BGR2RGB)
             re_rgb_plt = cv.cvtColor(re_rgb, cv.COLOR_BGR2RGB)
@@ -546,23 +485,14 @@ def main():
             plt.subplot(2, 2, 3).set_title('Predict Image'), plt.imshow(pred_rgb_plt)
             plt.subplot(2, 2, 4).set_title('Motion Vectors'), plt.quiver(coordMat[0, :], coordMat[1, :], coordMat[2, :],
                                                                         coordMat[3, :])
-            # plt.show()     
-            # if i < 10:
             plt.savefig('result/train_'+str(i)+'.png')     
             plt.close()
-
-            
-            
-            #plt.figure(figsize=(10, 10))
-            #plt.imshow(re_rgb)
-            #plt.show()
-            #re_img = cv.cvtColor(re_rgb,cv.COLOR_RGB2BGR)
             video.write(re_rgb)
     # plt.set_title("compression ratio")
-    plt.plot(l_comp)
+    # plt.plot(l_comp)
     plt.show()
-    compression = sum(l_comp) / len(l_comp)
-    print("compression_ratio: ", compression)
+    # compression = sum(l_comp) / len(l_comp)
+    # print("compression_ratio: ", compression)
 
 
 if __name__ == '__main__':
