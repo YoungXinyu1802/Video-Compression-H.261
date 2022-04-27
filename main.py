@@ -7,6 +7,7 @@ from scipy.fft import dctn, idctn
 import matplotlib.pyplot as plt
 from dahuffman import HuffmanCodec
 import math
+import datetime
 
 
 # Options for debugging.
@@ -80,12 +81,10 @@ def YUV2RGB(y, u, v, height, width):
     u = u.reshape((-1, width))
     v = v.reshape((-1, width))
     yuv[:height, :width] = y
-    yuv[height:height * 5 // 4, :width] = u
-    yuv[height * 5 // 4:height * 3 // 2, :width] = v
+    yuv[height : height*5//4, :width] = u
+    yuv[height*5//4 : height*3//2, :width] = v
     rgb = cv.cvtColor(yuv, cv.COLOR_YUV2BGR_I420)  
     return rgb
-
-
 
 def quantize(mat, width, height, isInv=False, isLum=True):
     '''
@@ -98,44 +97,17 @@ def quantize(mat, width, height, isInv=False, isLum=True):
     :return: image matrix that has undergone quantization or its inverse.
     '''
     quantized = np.zeros((height, width))
+    scale = 31
 
-    # Luminance quantization matrix (for Y component).
-    LQ = np.array([[16, 11, 10, 16, 24, 40, 51, 61],
-                   [12, 12, 14, 19, 26, 58, 60, 55],
-                   [14, 13, 16, 24, 40, 57, 69, 56],
-                   [14, 17, 22, 29, 51, 87, 89, 62],
-                   [18, 22, 37, 56, 68, 109, 103, 77],
-                   [24, 35, 55, 64, 81, 104, 113, 92],
-                   [49, 64, 78, 87, 108, 121, 120, 101],
-                   [72, 92, 95, 98, 112, 100, 103, 99]])
-
-    # Chrominance quantization matrix (for Cb/Cr components).
-    CQ = np.array([[17, 18, 24, 47, 99, 99, 99, 99],
-                   [18, 21, 26, 66, 99, 99, 99, 99],
-                   [24, 26, 56, 99, 99, 99, 99, 99],
-                   [47, 66, 99, 99, 99, 99, 99, 99],
-                   [99, 99, 99, 99, 99, 99, 99, 99],
-                   [99, 99, 99, 99, 99, 99, 99, 99],
-                   [99, 99, 99, 99, 99, 99, 99, 99],
-                   [99, 99, 99, 99, 99, 99, 99, 99]])
-
-    # Choose quantization matrix based on isLum flag.
-    quantMat = LQ if isLum else CQ
-
+    DC_step_size = 8
+    AC_step_size = 2 * scale
     # Perform quantization or its inverse depending on isInv flag.
     if isInv:
-        for N, M, cols, rows in product(range(0, width, 8), range(0, height, 8), range(8), range(8)):
-            # for cols, rows in product(range(8), repeat=2):
-            if M + rows >= height or cols + N >= width:
-                break
-            quantized[M + rows - 1, N + cols - 1] = round(mat[M + rows - 1, N + cols - 1] * quantMat[rows, cols])
+        quantized = (mat * AC_step_size).astype(np.int32)
+        quantized[0:width:8, 0:height:8] = (mat[0:width:8, 0:height:8] * DC_step_size).astype(np.int32)
     else:
-        for N, M, cols, rows in product(range(0, width, 8), range(0, height, 8), range(8), range(8)):
-            if M + rows >= height or cols + N >= width:
-                break
-            # for cols, rows in product(range(8), repeat=2):
-            quantized[M + rows - 1, N + cols - 1] = round(mat[M + rows - 1, N + cols - 1] / quantMat[rows, cols])
-
+        quantized = (mat / AC_step_size).astype(np.int32)
+        quantized[0:width:8, 0:height:8] = (mat[0:width:8, 0:height:8] / DC_step_size).astype(np.int32)
     return quantized
 
 def extractCoefficients(mat, width, height):
@@ -157,21 +129,13 @@ def extractCoefficients(mat, width, height):
                     20, 22, 33, 38, 46, 51, 55, 60,
                     21, 34, 37, 47, 50, 56, 59, 61,
                     35, 36, 48, 49, 57, 58, 62, 63])
-
     for N, M in product(range(0, height, 8), range(0, width, 8)):
         if N >= height // 8*8 or M >= width // 8*8:
             break
         num = N // 8 * width // 8 + M // 8
 
-        rows = N
-        cols = M
+        coeffMat[num][matIdx] = mat[N:N+8, M:M+8].reshape(-1)
 
-        for i in range(64):
-            coeffMat[num][matIdx[i]] = mat[rows][cols]
-            cols = cols + 1
-            if cols == M + 8:
-                rows = rows + 1
-                cols = M
     return coeffMat
 
 def IextractCoefficients(coeffMat,width,height):
@@ -193,16 +157,8 @@ def IextractCoefficients(coeffMat,width,height):
         if N >= height // 8*8 or M >= width // 8*8:
             break
         num = N // 8 * width // 8 + M // 8
+        blockMat[N:N+8, M:M+8] = coeffMat[num][matIdx].reshape((8,8))
 
-        rows = N
-        cols = M
-
-        for i in range(64):
-            blockMat[rows][cols] = coeffMat[num][matIdx[i]]
-            cols = cols + 1
-            if cols == M + 8:
-                rows = rows + 1
-                cols = M
     return blockMat
 
 def motionEstimation(y_curr, y_ref, cr_ref, cb_ref, width, height):
@@ -316,13 +272,10 @@ def getDC(CoeffMat):
     :return: DC coefficients.
     '''
     dc_coeff = np.zeros(CoeffMat.shape[0])
-    for i in range(CoeffMat.shape[0]):
-        dc_coeff[i] = CoeffMat[i, 0]
-    
+    dc_coeff = CoeffMat[:, 0]
     dcdpcm = np.zeros(CoeffMat.shape[0])
     dcdpcm[0] = dc_coeff[0]
-    for i in range(1, CoeffMat.shape[0]):
-        dcdpcm[i] = dc_coeff[i] - dc_coeff[i - 1]
+    dcdpcm[1:] = dc_coeff[1:] - dc_coeff[:-1]
     return dc_coeff, dcdpcm
 
 
@@ -350,7 +303,6 @@ def getAC(CoeffMat):
 def huffmanCoding(data):
     codec = HuffmanCodec.from_data(data)
     encode = codec.encode(data)
-    length = len(encode)
     return codec, encode
 
 def MatDecode(dc_codec, dc_encode, ac_codec, ac_encode, num):
@@ -364,10 +316,8 @@ def MatDecode(dc_codec, dc_encode, ac_codec, ac_encode, num):
     '''
     dc_decode = HuffmanCodec.decode(dc_codec, dc_encode)
     dc = np.zeros((num, ))
-    dc[0] = dc_decode[0]
-    for i in range(1, num):
-        dc[i] = dc[i - 1] + dc_decode[i]
-
+    dc = dc_decode[:]
+    dc = np.cumsum(dc)
     ac_decode = HuffmanCodec.decode(ac_codec, ac_encode)
     Mat = np.zeros((num, 64))
     Mat[:, 0] = dc
@@ -387,18 +337,6 @@ def MatDecode(dc_codec, dc_encode, ac_codec, ac_encode, num):
     return Mat
 
 
-def codeLength(CoeffMat):
-    '''
-    Computes the length of the huffman code for a given YCbCr component.
-    :param yCoeffMat: YCbCr component.
-    :return: length of the huffman code.
-    '''
-    dc_coeff, dcdpcm = getDC(CoeffMat)
-    ac_coeff = getAC(CoeffMat)
-    dc_encode, dc_length = huffmanCoding(dcdpcm)
-    ac_encode, ac_length = huffmanCoding(ac_coeff)
-    return dc_length + ac_length
-
 def main():
     #desc = 'Showcase of image processing techniques in MPEG encoder/decoder framework.'
     #parser = argparse.ArgumentParser(description=desc)
@@ -411,9 +349,10 @@ def main():
     width, height, fps = 1920, 1080, 30
     start_frame = 0
     end_frame = 1
-
+    # print start time
+    print('Start time: ' + str(datetime.datetime.now()))
     frames, num_frame = extractYUV(filepath, height, width, start_frame, end_frame)
-
+    print('End time: ' + str(datetime.datetime.now()))
     # frames,num,width, height, fps = extractFrames(filepath) #allframe,num,width,height
 
     video = cv.VideoWriter('output.avi', cv.VideoWriter_fourcc(*'XVID'), fps, (width, height))
@@ -428,42 +367,35 @@ def main():
     for frame_num in range(len(frames)):
         if frame_num % 2 == 0:
             curr = frames[frame_num]
-            # img_rgb = cv.cvtColor(frames[frame_num], cv.COLOR_BGR2RGB)
             if curr is None:
                 continue
-            # yCurr, crCurr, cbCurr = BGR2YCRCB(curr)
-            # cbCurr, crCurr = subsample_420(cbCurr, crCurr, width, height)
-            #print(yCurr)
-            
-            # yIFrame = yCurr
-            # cbIFrame = cbCurr
-            # crIFrame = crCurr
             
             y, u, v = curr['y'], curr['u'], curr['v']
-            # cv.imshow('y', y)
-            # cv.imshow('u', u)
-            # cv.imshow('v', v)
-            # cv.waitKey(1)
             rgb = YUV2RGB(y, u, v, height, width)
-            # cv.imshow('rgb', rgb)
-            # cv.waitKey(1)
-
 
             yDCT = dctn(y)
             cbDCT = dctn(u)
             crDCT = dctn(v)
-
+            print('1: ' + str(datetime.datetime.now()))
             yQuant = quantize(yDCT, width, height)
+            print('2: ' + str(datetime.datetime.now()))
             cbQuant = quantize(cbDCT, width // 2, height // 2, isLum=False)
+            print('3: ' + str(datetime.datetime.now()))
             crQuant = quantize(crDCT, width // 2, height // 2, isLum=False)
-
+            print('4: ' + str(datetime.datetime.now()))
 
             # Extract DC and AC coefficients; these would be transmitted to the decoder in a real MPEG
             # encoder/decoder framework.
             total_length = 0
+            print('extractC: ' + str(datetime.datetime.now()))
             yCoeffMat = extractCoefficients(yQuant, width, height)
-            dc_y, dpcm_y = getDC(yCoeffMat)      
+            print('ext_end: ' + str(datetime.datetime.now()))
+            
+            print('dc: ' + str(datetime.datetime.now()))
+            dc_y, dpcm_y = getDC(yCoeffMat)  
+            print('ac: ' + str(datetime.datetime.now()))    
             ac_y = getAC(yCoeffMat)
+            print('dc_end: ' + str(datetime.datetime.now()))
             dccodec_y, dcencode_y = huffmanCoding(dpcm_y)
             accodec_y, acencode_y = huffmanCoding(ac_y)
             total_length += len(dcencode_y) + len(acencode_y)
@@ -471,8 +403,11 @@ def main():
             cbCoeffMat = extractCoefficients(cbQuant, width // 2, height // 2)
             dc_cb, dpcm_cb = getDC(cbCoeffMat)
             ac_cb = getAC(cbCoeffMat)
+            print('huff1: ' + str(datetime.datetime.now()))
             dccodec_cb, dcencode_cb = huffmanCoding(dpcm_cb)
+            print('huff2: ' + str(datetime.datetime.now()))
             accodec_cb, acencode_cb = huffmanCoding(ac_cb)
+            print('huff3: ' + str(datetime.datetime.now()))
             total_length += len(dcencode_cb) + len(acencode_cb)
 
             crCoeffMat = extractCoefficients(crQuant, width // 2, height // 2)
@@ -496,7 +431,7 @@ def main():
             CbMatRecon = MatDecode(dccodec_cb,dcencode_cb,accodec_cb,acencode_cb,cbCoeffMat.shape[0])
             CbQuantRecon = IextractCoefficients(CbMatRecon,width//2,height//2)
            
-           #perform inverse quantization
+            # perform inverse quantization
             yIQuant = quantize(YQuantRecon, width, height, isInv=True)
             cbIQuant = quantize(CbQuantRecon, width // 2, height // 2, isInv=True, isLum=False)
             crIQuant = quantize(CrQuantRecon, width // 2, height // 2, isInv=True, isLum=False)
