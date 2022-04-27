@@ -301,6 +301,11 @@ def getAC(CoeffMat):
 
 
 def huffmanCoding(data):
+    '''
+    Huffman coding for data.
+    :param data:data.
+    :return: Huffman coded and encode.
+    '''
     codec = HuffmanCodec.from_data(data)
     encode = codec.encode(data)
     return codec, encode
