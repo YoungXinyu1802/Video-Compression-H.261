@@ -11,10 +11,6 @@ import math
 import datetime
 
 
-# Options for debugging.
-# np.set_printoptions(threshold=np.inf)
-
-
 def extractYUV(file_name, height, width, start_frame, end_frame):
     """
     Extracts the Y, U, and V components of the frames in the given video file.
@@ -191,18 +187,18 @@ def motionEstimation(y_curr, y_ref, cr_ref, cb_ref, width, height):
 
     # For each macroblock in the frame:
     mv_idx = 0
-    for n, m in product(range(0, height - 16, 16), range(0, width - 16, 16)):
-        MB_curr = y_curr[n:n + 15, m:m + 15]  # Current macroblock.
+    for n, m in product(range(0, height, 16), range(0, width, 16)):
+        MB_curr = y_curr[n:n + 16, m:m + 16]  # Current macroblock.
 
         # Identify search window parameters. For 8 px in each directions, we can have search windows of sizes 24x24,
         # 24x32, 32x24, or 32x32.
         SW_hmin = 0 if n - 8 < 0 else n - 8
         SW_wmin = 0 if m - 8 < 0 else m - 8
-        SW_hmax = height if n + 16 - 1 + 8 > height else n + 16 - 1 + 8
-        SW_wmax = width if m + 16 - 1 + 8 > width else m + 16 - 1 + 8
+        SW_hmax = height if n + 16 + 8 > height else n + 16 + 8
+        SW_wmax = width if m + 16 + 8 > width else m + 16 + 8
 
-        SW_x = SW_wmax - SW_wmin + 1
-        SW_y = SW_hmax - SW_hmin + 1
+        SW_x = SW_wmax - SW_wmin
+        SW_y = SW_hmax - SW_hmin
         SW_size = int(SW_x * SW_y)
 
         # No. of candidate blocks == search window area.
@@ -220,165 +216,66 @@ def motionEstimation(y_curr, y_ref, cr_ref, cb_ref, width, height):
 
         # Go through the designated search window for the current macroblock.
         SW_idx = 0
-        for i, j in product(range(SW_hmin, SW_hmax - 16), range(SW_wmin, SW_wmax - 16)):
-            MB_temp = y_ref[i:i + 15, j:j + 15]
-            diff = np.float32(MB_curr) - np.float32(MB_temp)
+        for i, j in product(range(SW_hmin, SW_hmax - 15), range(SW_wmin, SW_wmax - 15)):
+            MB_temp = y_ref[i:i + 16, j:j + 16]
+            if MB_curr.shape[0] != 16 or MB_curr.shape[1] != 16:
+                pass
+            else:
+                diff = np.float32(MB_curr) - np.float32(MB_temp)
+                SAD_vect[SW_idx] = np.sum(np.abs(diff))
+                SAD_arr[0, SW_idx] = i
+                SAD_arr[1, SW_idx] = j
+                SW_idx += 1
 
-            SAD_vect[SW_idx] = np.sum(np.abs(diff))
-            SAD_arr[0, SW_idx] = i
-            SAD_arr[1, SW_idx] = j
-            SW_idx += 1
-
+        if MB_curr.shape[0] != 16 or MB_curr.shape[1] != 16:
+            pass
+        else:
         # Get minimum SAD (sum of absolute differences) and search for its corresponding coordinates.
-        SAD_min = min(SAD_vect)
-        for i in range(SAD_len):
-            if SAD_vect[i] == SAD_min:
-                mv_row = (SAD_arr[0, i])
-                mv_col = (SAD_arr[1, i])
-                break
+            SAD_min = min(SAD_vect)
+            for i in range(SAD_len):
+                if SAD_vect[i] == SAD_min:
+                    mv_row = (SAD_arr[0, i])
+                    mv_col = (SAD_arr[1, i])
+                    break
 
-        # The coordinates gives the the top left pixel + the motion vector coordinates dx and dy.
-        MV_arr[0, mv_idx] = mv_row - n
-        MV_arr[1, mv_idx] = mv_col - m
+            # The coordinates gives the the top left pixel + the motion vector coordinates dx and dy.
+            MV_arr[0, mv_idx] = mv_row - n
+            MV_arr[1, mv_idx] = mv_col - m
 
-        # Do the same for cb/cr, which are subsampled.
-        MV_subarr[0, mv_idx] = int((mv_row - n) // 2)
-        MV_subarr[1, mv_idx] = int((mv_col - m) // 2)
+            # Do the same for cb/cr, which are subsampled.
+            MV_subarr[0, mv_idx] = int((mv_row - n) // 2)
+            MV_subarr[1, mv_idx] = int((mv_col - m) // 2)
 
-        # Apply the motion vectors to the current block of the reference frame,
-        y_pred[n:n + 15, m:m + 15] = np.float32(y_ref[mv_row:mv_row + 15, mv_col:mv_col + 15])
+        if MB_curr.shape[0] != 16 or MB_curr.shape[1] != 16:
+            y_pred[n:n + 16, m:m + 16] = np.float32(y_ref[n:n + MB_curr.shape[0], m: m+ MB_curr.shape[1]])
+        else:
+            # Apply the motion vectors to the current block of the reference frame,
+            y_pred[n:n + 16, m:m + 16] = np.float32(y_ref[mv_row:mv_row + 16, mv_col:mv_col + 16])
 
-        # Get motion vector inputs for quiver().
-        coordMat[0, mv_idx] = m
-        coordMat[1, mv_idx] = n
-        coordMat[2, mv_idx] = mv_col - m
-        coordMat[3, mv_idx] = mv_row - n
+            # Get motion vector inputs for quiver().
+            coordMat[0, mv_idx] = m
+            coordMat[1, mv_idx] = n
+            coordMat[2, mv_idx] = mv_col - m
+            coordMat[3, mv_idx] = mv_row - n
 
-        mv_idx += 1
+            mv_idx += 1
 
     # Do the same for cb/cr.
     cbcr_idx = 0
-    for i, j in product(range(0, (height // 2) - 8, 8), range(0, (width // 2) - 8, 8)):
-        ref_row = i + (MV_subarr[0, cbcr_idx])
-        ref_col = j + (MV_subarr[1, cbcr_idx])
+    for i, j in product(range(0, (height // 2), 8), range(0, (width // 2), 8)):
+        if i + 8 > (height//2):
+            cb_pred[i:height//2,j:j+8] = np.float32(cb_ref[i:height//2,j:j+8])
+            cr_pred[i:height//2,j:j+8] = np.float32(cr_ref[i:height//2,j:j+8])
+        else:
+            ref_row = i + (MV_subarr[0, cbcr_idx])
+            ref_col = j + (MV_subarr[1, cbcr_idx])
 
-        cb_pred[i:i + 7, j:j + 7] = np.float32(cb_ref[ref_row:ref_row + 7, ref_col:ref_col + 7])
-        cr_pred[i:i + 7, j:j + 7] = np.float32(cr_ref[ref_row:ref_row + 7, ref_col:ref_col + 7])
+            cb_pred[i:i + 8, j:j + 8] = np.float32(cb_ref[ref_row:ref_row + 8, ref_col:ref_col + 8])
+            cr_pred[i:i + 8, j:j + 8] = np.float32(cr_ref[ref_row:ref_row + 8, ref_col:ref_col + 8])
 
-        cbcr_idx += 1
+            cbcr_idx += 1
 
-    print('y_pred')
-    print(y_pred)
-    print('cb_pred')
-    print(cb_pred)
-    print('cr_pred')
-    print(cr_pred)
     return coordMat, MV_arr, MV_subarr, y_pred, cb_pred, cr_pred
-
-
-# def motionEstimation(y_curr, y_ref, cr_ref, cb_ref, width, height):
-#     '''
-#     Computes motion estimation for an image based on its reference frame.
-#     :param y_curr: Y component of current frame; motion estimation is soley done on Y component.
-#     :param y_ref: Y component of reference frame.
-#     :param cr_ref: Cr component of reference frame.
-#     :param cb_ref: Cb component of reference frame.
-#     :param width: width of frame.
-#     :param height: height of frame.
-#     :return: YCrCb components of predicted frame, coordinate matrix for quiver plot, and motion vector matrices.
-#     '''
-#     MV_arr = MV_subarr = np.zeros((2, 1999)).astype(int)
-#     y_pred = np.zeros((height, width))
-#     cb_pred = cr_pred = np.zeros((height // 2, width // 2))
-#     coordMat = np.zeros((4, 1999))
-#     mv_row = mv_col = 0
-
-#     # Search window sizes depend on where the macroblock is in the frame; i.e. at an edge, column/row, or in the middle.
-#     SW_dict = {
-#         576: 81,
-#         768: 153,
-#         1024: 289
-#     }
-
-#     # For each macroblock in the frame:
-#     mv_idx = 0
-#     for n, m in product(range(0, height - 16, 16), range(0, width - 16, 16)):
-#         MB_curr = y_curr[n:n + 15, m:m + 15]  # Current macroblock.
-
-#         # Identify search window parameters. For 8 px in each directions, we can have search windows of sizes 24x24,
-#         # 24x32, 32x24, or 32x32.
-#         SW_hmin = 0 if n - 8 < 0 else n - 8
-#         SW_wmin = 0 if m - 8 < 0 else m - 8
-#         SW_hmax = height if n + 16 - 1 + 8 > height else n + 16 - 1 + 8
-#         SW_wmax = width if m + 16 - 1 + 8 > width else m + 16 - 1 + 8
-
-#         SW_x = SW_wmax - SW_wmin + 1
-#         SW_y = SW_hmax - SW_hmin + 1
-#         SW_size = int(SW_x * SW_y)
-
-#         # No. of candidate blocks == search window area.
-#         SAD_len = 0
-#         for x, y in SW_dict.items():
-#             if x == SW_size:
-#                 SAD_len = y
-#                 break
-#         SAD_vect = np.zeros(SAD_len)
-#         SAD_arr = np.zeros((2, SAD_len)).astype(int)
-#         for i in range(SAD_len):
-#             SAD_vect[i] = 99999.0
-#             SAD_arr[0, i] = -1
-#             SAD_arr[1, i] = -1
-
-#         # Go through the designated search window for the current macroblock.
-#         SW_idx = 0
-#         for i, j in product(range(SW_hmin, SW_hmax - 16), range(SW_wmin, SW_wmax - 16)):
-#             MB_temp = y_ref[i:i + 15, j:j + 15]
-#             diff = np.float32(MB_curr) - np.float32(MB_temp)
-
-#             SAD_vect[SW_idx] = np.sum(np.abs(diff))
-#             SAD_arr[0, SW_idx] = i
-#             SAD_arr[1, SW_idx] = j
-#             SW_idx += 1
-
-#         # Get minimum SAD (sum of absolute differences) and search for its corresponding coordinates.
-#         SAD_min = min(SAD_vect)
-#         for i in range(SAD_len):
-#             if SAD_vect[i] == SAD_min:
-#                 mv_row = (SAD_arr[0, i])
-#                 mv_col = (SAD_arr[1, i])
-#                 break
-
-#         # The coordinates gives the the top left pixel + the motion vector coordinates dx and dy.
-#         MV_arr[0, mv_idx] = mv_row - n
-#         MV_arr[1, mv_idx] = mv_col - m
-
-#         # Do the same for cb/cr, which are subsampled.
-#         MV_subarr[0, mv_idx] = int((mv_row - n) // 2)
-#         MV_subarr[1, mv_idx] = int((mv_col - m) // 2)
-
-#         # Apply the motion vectors to the current block of the reference frame,
-#         y_pred[n:n + 15, m:m + 15] = np.float32(y_ref[mv_row:mv_row + 15, mv_col:mv_col + 15])
-
-#         # Get motion vector inputs for quiver().
-#         coordMat[0, mv_idx] = m
-#         coordMat[1, mv_idx] = n
-#         coordMat[2, mv_idx] = mv_col - m
-#         coordMat[3, mv_idx] = mv_row - n
-
-#         mv_idx += 1
-
-#     # Do the same for cb/cr.
-#     cbcr_idx = 0
-#     for i, j in product(range(0, (height // 2) - 8, 8), range(0, (width // 2) - 8, 8)):
-#         ref_row = i + (MV_subarr[0, cbcr_idx])
-#         ref_col = j + (MV_subarr[1, cbcr_idx])
-
-#         cb_pred[i:i + 7, j:j + 7] = np.float32(cb_ref[ref_row:ref_row + 7, ref_col:ref_col + 7])
-#         cr_pred[i:i + 7, j:j + 7] = np.float32(cr_ref[ref_row:ref_row + 7, ref_col:ref_col + 7])
-
-#         cbcr_idx += 1
-
-#     return coordMat, MV_arr, MV_subarr, y_pred, cb_pred, cr_pred
 
 def getDC(CoeffMat):
     '''
@@ -411,7 +308,6 @@ def getAC(CoeffMat):
                 ac_coeff.append((cnt, x))
                 cnt = 0
         ac_coeff.append((0, 0))
-            
     return ac_coeff
 
 
@@ -471,15 +367,10 @@ def encode_decode(y, u, v, height, width):
         # Extract DC and AC coefficients; these would be transmitted to the decoder in a real MPEG
         # encoder/decoder framework.
         total_length = 0
-        print('extractC: ' + str(datetime.datetime.now()))
         yCoeffMat = extractCoefficients(yQuant, width, height)
-        print('ext_end: ' + str(datetime.datetime.now()))
         
-        print('dc: ' + str(datetime.datetime.now()))
-        dc_y, dpcm_y = getDC(yCoeffMat)  
-        print('ac: ' + str(datetime.datetime.now()))    
+        dc_y, dpcm_y = getDC(yCoeffMat)
         ac_y = getAC(yCoeffMat)
-        print('dc_end: ' + str(datetime.datetime.now()))
         dccodec_y, dcencode_y = huffmanCoding(dpcm_y)
         accodec_y, acencode_y = huffmanCoding(ac_y)
         total_length += len(dcencode_y) + len(acencode_y)
@@ -487,11 +378,8 @@ def encode_decode(y, u, v, height, width):
         uCoeffMat = extractCoefficients(uQuant, width // 2, height // 2)
         dc_u, dpcm_u = getDC(uCoeffMat)
         ac_u = getAC(uCoeffMat)
-        print('huff1: ' + str(datetime.datetime.now()))
         dccodec_u, dcencode_u = huffmanCoding(dpcm_u)
-        print('huff2: ' + str(datetime.datetime.now()))
         accodec_u, acencode_u = huffmanCoding(ac_u)
-        print('huff3: ' + str(datetime.datetime.now()))
         total_length += len(dcencode_u) + len(acencode_u)
 
         vCoeffMat = extractCoefficients(vQuant, width // 2, height // 2)
@@ -500,9 +388,6 @@ def encode_decode(y, u, v, height, width):
         dccodec_v, dcencode_v = huffmanCoding(dpcm_v)
         accodec_v, acencode_v= huffmanCoding(ac_v)
         total_length += len(dcencode_v) + len(acencode_v)
-
-        # print("Compress_ratio:", total_length / (width * height * 3))
-        # l_comp.append((width * height * 3) / total_length)
 
         # Perform inverse quantization.
         # decoding
@@ -524,7 +409,10 @@ def encode_decode(y, u, v, height, width):
         yIDCT = idctn(yIQuant)
         uIDCT = idctn(uIQuant)
         vIDCT = idctn(vIQuant)
-        return yIDCT, uIDCT, vIDCT
+        
+        compression = (height * width * 3 // 2) / total_length
+
+        return yIDCT, uIDCT, vIDCT, compression
 
 
 
@@ -536,52 +424,46 @@ def main():
     #args = parser.parse_args()
 
     # Get arguments
-    filepath = 'videoSRC19_1920x1080_30.yuv'
-    width, height, fps = 1920, 1080, 30
+    filepath = 'output.yuv'
+    width, height, fps = 640, 360, 30
     start_frame = 0
-    end_frame = 5
+    end_frame = 150
     # print start time
     print('Start time: ' + str(datetime.datetime.now()))
     frames, num_frame = extractYUV(filepath, height, width, start_frame, end_frame)
     print('End time: ' + str(datetime.datetime.now()))
-    # frames,num,width, height, fps = extractFrames(filepath) #allframe,num,width,height
 
     video = cv.VideoWriter('output.avi', cv.VideoWriter_fourcc(*'XVID'), fps, (width, height))
-    
-    yIFrame = np.zeros((height, width))
-    uIFrame = np.zeros((height // 2, width // 2))
-    vIFrame = np.zeros((height // 2, width // 2))
-    
-    Frame_result = []
+
     i = 0
+    total_length = 0
     l_comp = []
     for frame_num in range(len(frames)):
         if frame_num % 2 == 0:
+            print("[I] compressing frame " + str(frame_num))
             curr = frames[frame_num]
             if curr is None:
                 continue
             y, u, v = curr['y'], curr['u'], curr['v']
-            yIDCT, uIDCT, vIDCT = encode_decode(y, u, v, height, width)
+            yIDCT, uIDCT, vIDCT, length = encode_decode(y, u, v, height, width)
+            total_length += length
+            l_comp.append(length)
 
             re_rgb = YUV2RGB(yIDCT.astype(np.uint8),uIDCT.astype(np.uint8),vIDCT.astype(np.uint8),height, width)
-            # cv.imshow('re_rgb', re_rgb)
-            # cv.waitKey(0)
+
             video.write(re_rgb)
         else:
+            print("[P] compressing frame " + str(frame_num))
             curr = frames[frame_num]
             if curr is None:
                 continue
-            yCurr, vCurr, uCurr = curr['y'], curr['u'], curr['v']
-            # cv.imshow('y', yCurr)
-            # cv.imshow('u', uCurr)
-            # cv.imshow('v', vCurr)
-            # cv.waitKey(0)
+            yCurr, uCurr, vCurr = curr['y'], curr['u'], curr['v']
 
             # Do motion estimatation using the I-frame as the reference frame for the current frame in the loop.python mpeg.py --file 'walk_qcif.avi' --extract 6 10
-            coordMat, MV_arr, MV_subarr, yPred, uPred, vPred = motionEstimation(yCurr, yIFrame, vIFrame, uIFrame, width,height)
-            cv.imshow('yPred', yPred)
-            cv.imshow('uPred', uPred)
-            cv.imshow('vPred', vPred)
+            coordMat, MV_arr, MV_subarr, yPred, uPred, vPred = motionEstimation(yCurr, y, u, v, width,height)
+            # cv.imshow('yPred', yPred)
+            # cv.imshow('uPred', uPred)
+            # cv.imshow('vPred', vPred)
 
             yTmp = yPred
             uTmp = uPred
@@ -591,41 +473,47 @@ def main():
             yDiff = yCurr.astype(np.uint8) - yTmp.astype(np.uint8)
             uDiff = uCurr.astype(np.uint8) - uTmp.astype(np.uint8)
             vDiff = vCurr.astype(np.uint8) - vTmp.astype(np.uint8)
-            cv.imshow('ydiff', yDiff)
-            cv.imshow('vDiff', vDiff)
-            cv.imshow('uDiff', uDiff)
-            cv.waitKey(0)
 
-            yIDCT, uIDCT, vIDCT = encode_decode(yDiff, uDiff, vDiff, height, width)
+            print('yDiff')
+            print(yDiff)
+            print('uDiff')
+            print(uDiff)
+            print('vDiff')
+            print(vDiff)
+
+            yIDCT, uIDCT, vIDCT, length = encode_decode(yDiff, uDiff, vDiff, height, width)
+            total_length += length
+            l_comp.append(length)
 
             yRcn = yIDCT.astype(np.uint8) + yPred.astype(np.uint8)
             uRcn = uIDCT.astype(np.uint8) + uPred.astype(np.uint8)
             vRcn = vIDCT.astype(np.uint8) + vPred.astype(np.uint8)
 
             i += 1
-            re_rgb = YUV2RGB(yRcn.astype(np.uint8),uRcn.astype(np.uint8),vRcn.astype(np.uint8),height, width)
-            diffMat = YUV2RGB(yDiff, uDiff, vDiff, width, height)
-            pred_rgb = YUV2RGB(yTmp, uTmp, vTmp, width, height)
-            cv.imshow('pred_rgb', pred_rgb)
-            cv.waitKey(0)
+            re_rgb = YUV2RGB(yRcn.astype(np.uint8),uRcn.astype(np.uint8),vRcn.astype(np.uint8), height, width)
+            diffMat = YUV2RGB(yDiff, uDiff, vDiff, height, width)
+            pred_rgb = YUV2RGB(yTmp, uTmp, vTmp, height, width)
             plt.figure(figsize=(10, 10))
+            curr = YUV2RGB(yCurr, uCurr, vCurr, height, width)
             curr_plt = cv.cvtColor(curr, cv.COLOR_BGR2RGB)
             re_rgb_plt = cv.cvtColor(re_rgb, cv.COLOR_BGR2RGB)
             pred_rgb_plt = cv.cvtColor(pred_rgb, cv.COLOR_BGR2RGB)
-            diffMat_plt = cv.cvtColor(pred_rgb_plt - re_rgb_plt, cv.COLOR_BGR2RGB)
+            diffMat_plt = cv.cvtColor(diffMat, cv.COLOR_BGR2RGB)
             plt.subplot(2, 2, 1).set_title('Current Image'), plt.imshow(curr_plt)
-            plt.subplot(2, 2, 2).set_title('Reconstructed Image'), plt.imshow(re_rgb_plt)
-            plt.subplot(2, 2, 3).set_title('Predict Image'), plt.imshow(pred_rgb_plt)
+            plt.subplot(2, 2, 3).set_title('Differential Image'), plt.imshow(diffMat_plt)
+            plt.subplot(2, 2, 2).set_title('Predicted Image'), plt.imshow(pred_rgb_plt)
             plt.subplot(2, 2, 4).set_title('Motion Vectors'), plt.quiver(coordMat[0, :], coordMat[1, :], coordMat[2, :],
                                                                         coordMat[3, :])
             plt.savefig('result/train_'+str(i)+'.png')     
             plt.close()
             video.write(re_rgb)
-    # plt.set_title("compression ratio")
-    # plt.plot(l_comp)
+    plt.plot(l_comp)
     plt.show()
-    # compression = sum(l_comp) / len(l_comp)
-    # print("compression_ratio: ", compression)
+    print(l_comp)
+    # compression = (height * width * 3 // 2 * num_frame) /  total_length
+    # print("compression ratio: " + str(compression))
+    compression = sum(l_comp) / len(l_comp)
+    print("compression_ratio: ", compression)
 
 
 if __name__ == '__main__':
