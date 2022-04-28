@@ -1,4 +1,5 @@
 import argparse
+from concurrent.futures import wait
 import cv2 as cv
 import numpy as np
 from itertools import product
@@ -172,10 +173,13 @@ def motionEstimation(y_curr, y_ref, cr_ref, cb_ref, width, height):
     :param height: height of frame.
     :return: YCrCb components of predicted frame, coordinate matrix for quiver plot, and motion vector matrices.
     '''
-    MV_arr = MV_subarr = np.zeros((2, 1999)).astype(int)
+    h_num = math.ceil(height/16)
+    w_num = math.ceil(width/16)
+    size = h_num*w_num
+    MV_arr = MV_subarr = np.zeros((2, size)).astype(int)
     y_pred = np.zeros((height, width))
     cb_pred = cr_pred = np.zeros((height // 2, width // 2))
-    coordMat = np.zeros((4, 1999))
+    coordMat = np.zeros((4,size))
     mv_row = mv_col = 0
 
     # Search window sizes depend on where the macroblock is in the frame; i.e. at an edge, column/row, or in the middle.
@@ -263,7 +267,118 @@ def motionEstimation(y_curr, y_ref, cr_ref, cb_ref, width, height):
 
         cbcr_idx += 1
 
+    print('y_pred')
+    print(y_pred)
+    print('cb_pred')
+    print(cb_pred)
+    print('cr_pred')
+    print(cr_pred)
     return coordMat, MV_arr, MV_subarr, y_pred, cb_pred, cr_pred
+
+
+# def motionEstimation(y_curr, y_ref, cr_ref, cb_ref, width, height):
+#     '''
+#     Computes motion estimation for an image based on its reference frame.
+#     :param y_curr: Y component of current frame; motion estimation is soley done on Y component.
+#     :param y_ref: Y component of reference frame.
+#     :param cr_ref: Cr component of reference frame.
+#     :param cb_ref: Cb component of reference frame.
+#     :param width: width of frame.
+#     :param height: height of frame.
+#     :return: YCrCb components of predicted frame, coordinate matrix for quiver plot, and motion vector matrices.
+#     '''
+#     MV_arr = MV_subarr = np.zeros((2, 1999)).astype(int)
+#     y_pred = np.zeros((height, width))
+#     cb_pred = cr_pred = np.zeros((height // 2, width // 2))
+#     coordMat = np.zeros((4, 1999))
+#     mv_row = mv_col = 0
+
+#     # Search window sizes depend on where the macroblock is in the frame; i.e. at an edge, column/row, or in the middle.
+#     SW_dict = {
+#         576: 81,
+#         768: 153,
+#         1024: 289
+#     }
+
+#     # For each macroblock in the frame:
+#     mv_idx = 0
+#     for n, m in product(range(0, height - 16, 16), range(0, width - 16, 16)):
+#         MB_curr = y_curr[n:n + 15, m:m + 15]  # Current macroblock.
+
+#         # Identify search window parameters. For 8 px in each directions, we can have search windows of sizes 24x24,
+#         # 24x32, 32x24, or 32x32.
+#         SW_hmin = 0 if n - 8 < 0 else n - 8
+#         SW_wmin = 0 if m - 8 < 0 else m - 8
+#         SW_hmax = height if n + 16 - 1 + 8 > height else n + 16 - 1 + 8
+#         SW_wmax = width if m + 16 - 1 + 8 > width else m + 16 - 1 + 8
+
+#         SW_x = SW_wmax - SW_wmin + 1
+#         SW_y = SW_hmax - SW_hmin + 1
+#         SW_size = int(SW_x * SW_y)
+
+#         # No. of candidate blocks == search window area.
+#         SAD_len = 0
+#         for x, y in SW_dict.items():
+#             if x == SW_size:
+#                 SAD_len = y
+#                 break
+#         SAD_vect = np.zeros(SAD_len)
+#         SAD_arr = np.zeros((2, SAD_len)).astype(int)
+#         for i in range(SAD_len):
+#             SAD_vect[i] = 99999.0
+#             SAD_arr[0, i] = -1
+#             SAD_arr[1, i] = -1
+
+#         # Go through the designated search window for the current macroblock.
+#         SW_idx = 0
+#         for i, j in product(range(SW_hmin, SW_hmax - 16), range(SW_wmin, SW_wmax - 16)):
+#             MB_temp = y_ref[i:i + 15, j:j + 15]
+#             diff = np.float32(MB_curr) - np.float32(MB_temp)
+
+#             SAD_vect[SW_idx] = np.sum(np.abs(diff))
+#             SAD_arr[0, SW_idx] = i
+#             SAD_arr[1, SW_idx] = j
+#             SW_idx += 1
+
+#         # Get minimum SAD (sum of absolute differences) and search for its corresponding coordinates.
+#         SAD_min = min(SAD_vect)
+#         for i in range(SAD_len):
+#             if SAD_vect[i] == SAD_min:
+#                 mv_row = (SAD_arr[0, i])
+#                 mv_col = (SAD_arr[1, i])
+#                 break
+
+#         # The coordinates gives the the top left pixel + the motion vector coordinates dx and dy.
+#         MV_arr[0, mv_idx] = mv_row - n
+#         MV_arr[1, mv_idx] = mv_col - m
+
+#         # Do the same for cb/cr, which are subsampled.
+#         MV_subarr[0, mv_idx] = int((mv_row - n) // 2)
+#         MV_subarr[1, mv_idx] = int((mv_col - m) // 2)
+
+#         # Apply the motion vectors to the current block of the reference frame,
+#         y_pred[n:n + 15, m:m + 15] = np.float32(y_ref[mv_row:mv_row + 15, mv_col:mv_col + 15])
+
+#         # Get motion vector inputs for quiver().
+#         coordMat[0, mv_idx] = m
+#         coordMat[1, mv_idx] = n
+#         coordMat[2, mv_idx] = mv_col - m
+#         coordMat[3, mv_idx] = mv_row - n
+
+#         mv_idx += 1
+
+#     # Do the same for cb/cr.
+#     cbcr_idx = 0
+#     for i, j in product(range(0, (height // 2) - 8, 8), range(0, (width // 2) - 8, 8)):
+#         ref_row = i + (MV_subarr[0, cbcr_idx])
+#         ref_col = j + (MV_subarr[1, cbcr_idx])
+
+#         cb_pred[i:i + 7, j:j + 7] = np.float32(cb_ref[ref_row:ref_row + 7, ref_col:ref_col + 7])
+#         cr_pred[i:i + 7, j:j + 7] = np.float32(cr_ref[ref_row:ref_row + 7, ref_col:ref_col + 7])
+
+#         cbcr_idx += 1
+
+#     return coordMat, MV_arr, MV_subarr, y_pred, cb_pred, cr_pred
 
 def getDC(CoeffMat):
     '''
@@ -424,7 +539,7 @@ def main():
     filepath = 'videoSRC19_1920x1080_30.yuv'
     width, height, fps = 1920, 1080, 30
     start_frame = 0
-    end_frame = 1
+    end_frame = 5
     # print start time
     print('Start time: ' + str(datetime.datetime.now()))
     frames, num_frame = extractYUV(filepath, height, width, start_frame, end_frame)
@@ -449,17 +564,24 @@ def main():
             yIDCT, uIDCT, vIDCT = encode_decode(y, u, v, height, width)
 
             re_rgb = YUV2RGB(yIDCT.astype(np.uint8),uIDCT.astype(np.uint8),vIDCT.astype(np.uint8),height, width)
-            cv.imshow('re_rgb', re_rgb)
-            cv.waitKey(0)
+            # cv.imshow('re_rgb', re_rgb)
+            # cv.waitKey(0)
             video.write(re_rgb)
         else:
             curr = frames[frame_num]
             if curr is None:
                 continue
             yCurr, vCurr, uCurr = curr['y'], curr['u'], curr['v']
+            # cv.imshow('y', yCurr)
+            # cv.imshow('u', uCurr)
+            # cv.imshow('v', vCurr)
+            # cv.waitKey(0)
 
             # Do motion estimatation using the I-frame as the reference frame for the current frame in the loop.python mpeg.py --file 'walk_qcif.avi' --extract 6 10
             coordMat, MV_arr, MV_subarr, yPred, uPred, vPred = motionEstimation(yCurr, yIFrame, vIFrame, uIFrame, width,height)
+            cv.imshow('yPred', yPred)
+            cv.imshow('uPred', uPred)
+            cv.imshow('vPred', vPred)
 
             yTmp = yPred
             uTmp = uPred
@@ -469,6 +591,10 @@ def main():
             yDiff = yCurr.astype(np.uint8) - yTmp.astype(np.uint8)
             uDiff = uCurr.astype(np.uint8) - uTmp.astype(np.uint8)
             vDiff = vCurr.astype(np.uint8) - vTmp.astype(np.uint8)
+            cv.imshow('ydiff', yDiff)
+            cv.imshow('vDiff', vDiff)
+            cv.imshow('uDiff', uDiff)
+            cv.waitKey(0)
 
             yIDCT, uIDCT, vIDCT = encode_decode(yDiff, uDiff, vDiff, height, width)
 
@@ -480,6 +606,8 @@ def main():
             re_rgb = YUV2RGB(yRcn.astype(np.uint8),uRcn.astype(np.uint8),vRcn.astype(np.uint8),height, width)
             diffMat = YUV2RGB(yDiff, uDiff, vDiff, width, height)
             pred_rgb = YUV2RGB(yTmp, uTmp, vTmp, width, height)
+            cv.imshow('pred_rgb', pred_rgb)
+            cv.waitKey(0)
             plt.figure(figsize=(10, 10))
             curr_plt = cv.cvtColor(curr, cv.COLOR_BGR2RGB)
             re_rgb_plt = cv.cvtColor(re_rgb, cv.COLOR_BGR2RGB)
