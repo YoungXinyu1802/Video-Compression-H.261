@@ -1,5 +1,5 @@
 # Video-Compression-H.261
-Video compression based on H.261 standard.
+**Video compression based on H.261 standard.**
 
 Development environment: Python3
 
