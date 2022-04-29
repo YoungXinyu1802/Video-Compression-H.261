@@ -11,7 +11,7 @@ import math
 import datetime
 
 
-def extractYUV(file_name, height, width, start_frame, end_frame):
+def extractYUV(file_name, height, width):
     """
     Extracts the Y, U, and V components of the frames in the given video file.
     :param file_name: filepath of video file to extract frames from.
@@ -29,11 +29,10 @@ def extractYUV(file_name, height, width, start_frame, end_frame):
     frame_size = height * width * 3 // 2  # Size of a frame in bytes
     num_frame = fp_end // frame_size  # Number of frames in the video
     print("This yuv file has {} frame imgs!".format(num_frame))
-    fp.seek(frame_size * start_frame, 0)  # Seek to the start of the first frame
-    print("Extract imgs start frame is {}!".format(start_frame + 1))
+    fp.seek(0, 0)  # Seek to the start of the first frame
 
     YUV = []
-    for i in range(start_frame, end_frame):
+    for i in range(num_frame):
         yuv = np.zeros(shape=frame_size, dtype='uint8', order='C')
         for j in range(frame_size):
             yuv[j] = ord(fp.read(1))  # Read one byte from the file
@@ -57,7 +56,6 @@ def extractYUV(file_name, height, width, start_frame, end_frame):
         # save
         YUV.append({'y': y, 'u': u, 'v': v})
 
-        print("Extract frame {}".format(i + 1))
 
     fp.close()
     print("job done!")
@@ -353,137 +351,123 @@ def MatDecode(dc_codec, dc_encode, ac_codec, ac_encode, num):
     return Mat
 
 def encode_decode(y, u, v, height, width):
-        # y, u, v = curr['y'], curr['u'], curr['v']
-        rgb = YUV2RGB(y, u, v, height, width)
+    '''
+    Encodes and decodes the YUV components.
+    :param y: YUV component.
+    :param u: YUV component.
+    :param v: YUV component.
+    :param height: Height of the image.
+    :param width: Width of the image.
+    :return: Encoded and decoded YUV components.
+    '''
 
-        yDCT = dctn(y)
-        uDCT = dctn(u)
-        vDCT = dctn(v)
-        print('1: ' + str(datetime.datetime.now()))
-        yQuant = quantize(yDCT, width, height)
-        uQuant = quantize(uDCT, width // 2, height // 2, isLum=False)
-        vQuant = quantize(vDCT, width // 2, height // 2, isLum=False)
+    yDCT, uDCT, vDCT = dctn(y), dctn(u), dctn(v)
 
-        # Extract DC and AC coefficients; these would be transmitted to the decoder in a real MPEG
-        # encoder/decoder framework.
-        total_length = 0
-        yCoeffMat = extractCoefficients(yQuant, width, height)
-        
-        dc_y, dpcm_y = getDC(yCoeffMat)
-        ac_y = getAC(yCoeffMat)
-        dccodec_y, dcencode_y = huffmanCoding(dpcm_y)
-        accodec_y, acencode_y = huffmanCoding(ac_y)
-        total_length += len(dcencode_y) + len(acencode_y)
-        
-        uCoeffMat = extractCoefficients(uQuant, width // 2, height // 2)
-        dc_u, dpcm_u = getDC(uCoeffMat)
-        ac_u = getAC(uCoeffMat)
-        dccodec_u, dcencode_u = huffmanCoding(dpcm_u)
-        accodec_u, acencode_u = huffmanCoding(ac_u)
-        total_length += len(dcencode_u) + len(acencode_u)
+    yQuant = quantize(yDCT, width, height)
+    uQuant = quantize(uDCT, width // 2, height // 2)
+    vQuant = quantize(vDCT, width // 2, height // 2)
 
-        vCoeffMat = extractCoefficients(vQuant, width // 2, height // 2)
-        dc_v, dpcm_v = getDC(vCoeffMat)
-        ac_v = getAC(vCoeffMat)
-        dccodec_v, dcencode_v = huffmanCoding(dpcm_v)
-        accodec_v, acencode_v= huffmanCoding(ac_v)
-        total_length += len(dcencode_v) + len(acencode_v)
+    # Extract DC and AC coefficients; these would be transmitted to the decoder in a real MPEG
+    # encoder/decoder framework.
+    yCoeffMat = extractCoefficients(yQuant, width, height)
+    
+    dc_y, dpcm_y = getDC(yCoeffMat)
+    ac_y = getAC(yCoeffMat)
+    dccodec_y, dcencode_y = huffmanCoding(dpcm_y)
+    accodec_y, acencode_y = huffmanCoding(ac_y)
+    
+    uCoeffMat = extractCoefficients(uQuant, width // 2, height // 2)
+    dc_u, dpcm_u = getDC(uCoeffMat)
+    ac_u = getAC(uCoeffMat)
+    dccodec_u, dcencode_u = huffmanCoding(dpcm_u)
+    accodec_u, acencode_u = huffmanCoding(ac_u)
 
-        # Perform inverse quantization.
-        # decoding
-        YMatRecon = MatDecode(dccodec_y, dcencode_y, accodec_y, acencode_y, yCoeffMat.shape[0])
-        YQuantRecon = IextractCoefficients(YMatRecon, width, height)
+    vCoeffMat = extractCoefficients(vQuant, width // 2, height // 2)
+    dc_v, dpcm_v = getDC(vCoeffMat)
+    ac_v = getAC(vCoeffMat)
+    dccodec_v, dcencode_v = huffmanCoding(dpcm_v)
+    accodec_v, acencode_v= huffmanCoding(ac_v)
 
-        vMatRecon = MatDecode(dccodec_v,dcencode_v,accodec_v,acencode_v,vCoeffMat.shape[0])
-        vQuantRecon = IextractCoefficients(vMatRecon,width//2,height//2)
+    # Perform inverse quantization.
+    # decoding
+    YMatRecon = MatDecode(dccodec_y, dcencode_y, accodec_y, acencode_y, yCoeffMat.shape[0])
+    YQuantRecon = IextractCoefficients(YMatRecon, width, height)
 
-        uMatRecon = MatDecode(dccodec_u,dcencode_u,accodec_u,acencode_u,uCoeffMat.shape[0])
-        uQuantRecon = IextractCoefficients(uMatRecon,width//2,height//2)
-        
-        # perform inverse quantization
-        yIQuant = quantize(YQuantRecon, width, height, isInv=True)
-        uIQuant = quantize(uQuantRecon, width // 2, height // 2, isInv=True, isLum=False)
-        vIQuant = quantize(vQuantRecon, width // 2, height // 2, isInv=True, isLum=False)
+    vMatRecon = MatDecode(dccodec_v,dcencode_v,accodec_v,acencode_v,vCoeffMat.shape[0])
+    vQuantRecon = IextractCoefficients(vMatRecon,width//2,height//2)
 
-        #perform inverse DCT
-        yIDCT = idctn(yIQuant)
-        uIDCT = idctn(uIQuant)
-        vIDCT = idctn(vIQuant)
-        
-        compression = (height * width * 3 // 2) / total_length
+    uMatRecon = MatDecode(dccodec_u,dcencode_u,accodec_u,acencode_u,uCoeffMat.shape[0])
+    uQuantRecon = IextractCoefficients(uMatRecon,width//2,height//2)
+    
+    # perform inverse quantization
+    yIQuant = quantize(YQuantRecon, width, height, isInv=True)
+    uIQuant = quantize(uQuantRecon, width // 2, height // 2, isInv=True, isLum=False)
+    vIQuant = quantize(vQuantRecon, width // 2, height // 2, isInv=True, isLum=False)
 
-        return yIDCT, uIDCT, vIDCT, compression
+    #perform inverse DCT
+    yIDCT = idctn(yIQuant)
+    uIDCT = idctn(uIQuant)
+    vIDCT = idctn(vIQuant)
+    
+    return yIDCT, uIDCT, vIDCT
 
 
 
 def main():
     #desc = 'Showcase of image processing techniques in MPEG encoder/decoder framework.'
-    #parser = argparse.ArgumentParser(description=desc)
+    parser = argparse.ArgumentParser()
 
-    #parser.add_argument('--file', dest='filepath', required=True)
-    #args = parser.parse_args()
+    parser.add_argument('--src', dest='src', required=True)
+    parser.add_argument('--size', dest='size', required=True)
+    parser.add_argument('--fps', dest='fps', required=True)
+    parser.add_argument('--dst', dest='dst', required=True)
+
+    args = parser.parse_args()
 
     # Get arguments
-    filepath = 'output.yuv'
-    width, height, fps = 640, 360, 30
+    filepath = args.src
+    width, height = map(int, args.size.split('x'))
+    fps = int(args.fps)
     start_frame = 0
     end_frame = 150
+    dst = args.dst
     # print start time
     print('Start time: ' + str(datetime.datetime.now()))
-    frames, num_frame = extractYUV(filepath, height, width, start_frame, end_frame)
+    frames, num_frame = extractYUV(filepath, height, width)
     print('End time: ' + str(datetime.datetime.now()))
 
-    video = cv.VideoWriter('output.avi', cv.VideoWriter_fourcc(*'XVID'), fps, (width, height))
+    video = cv.VideoWriter(dst, cv.VideoWriter_fourcc(*'XVID'), fps, (width, height))
 
     i = 0
-    total_length = 0
-    l_comp = []
+    PSNR = []
     for frame_num in range(len(frames)):
+        curr = frames[frame_num]
+        if curr is None:
+            continue
+        yCurr, uCurr, vCurr = curr['y'], curr['u'], curr['v']
         if frame_num % 2 == 0:
             print("[I] compressing frame " + str(frame_num))
-            curr = frames[frame_num]
-            if curr is None:
-                continue
-            y, u, v = curr['y'], curr['u'], curr['v']
-            yIDCT, uIDCT, vIDCT, length = encode_decode(y, u, v, height, width)
-            total_length += length
-            l_comp.append(length)
 
-            re_rgb = YUV2RGB(yIDCT.astype(np.uint8),uIDCT.astype(np.uint8),vIDCT.astype(np.uint8),height, width)
+            yRcn, uRcn, vRcn = encode_decode(yCurr, uCurr, vCurr, height, width)
 
-            video.write(re_rgb)
+            re_rgb = YUV2RGB(yRcn.astype(np.uint8),uRcn.astype(np.uint8), vRcn.astype(np.uint8), height, width)
+
         else:
             print("[P] compressing frame " + str(frame_num))
-            curr = frames[frame_num]
-            if curr is None:
-                continue
-            yCurr, uCurr, vCurr = curr['y'], curr['u'], curr['v']
+
+            
 
             # Do motion estimatation using the I-frame as the reference frame for the current frame in the loop.python mpeg.py --file 'walk_qcif.avi' --extract 6 10
-            coordMat, MV_arr, MV_subarr, yPred, uPred, vPred = motionEstimation(yCurr, y, u, v, width,height)
-            # cv.imshow('yPred', yPred)
-            # cv.imshow('uPred', uPred)
-            # cv.imshow('vPred', vPred)
+            coordMat, MV_arr, MV_subarr, yPred, uPred, vPred = motionEstimation(yCurr, yCurr, uCurr, vCurr, width,height)
 
-            yTmp = yPred
-            uTmp = uPred
-            vTmp = vPred
+            yTmp, uTmp, vTmp = yPred, uPred, vPred
 
             # Get residual frame
             yDiff = yCurr.astype(np.uint8) - yTmp.astype(np.uint8)
             uDiff = uCurr.astype(np.uint8) - uTmp.astype(np.uint8)
             vDiff = vCurr.astype(np.uint8) - vTmp.astype(np.uint8)
 
-            print('yDiff')
-            print(yDiff)
-            print('uDiff')
-            print(uDiff)
-            print('vDiff')
-            print(vDiff)
-
-            yIDCT, uIDCT, vIDCT, length = encode_decode(yDiff, uDiff, vDiff, height, width)
-            total_length += length
-            l_comp.append(length)
+            yIDCT, uIDCT, vIDCT = encode_decode(yDiff, uDiff, vDiff, height, width)
 
             yRcn = yIDCT.astype(np.uint8) + yPred.astype(np.uint8)
             uRcn = uIDCT.astype(np.uint8) + uPred.astype(np.uint8)
@@ -506,14 +490,17 @@ def main():
                                                                         coordMat[3, :])
             plt.savefig('result/train_'+str(i)+'.png')     
             plt.close()
-            video.write(re_rgb)
-    plt.plot(l_comp)
+            
+        mse = (np.linalg.norm(yRcn - yCurr) + np.linalg.norm(uRcn - uCurr)  + np.linalg.norm(vRcn - vCurr)) \
+                / (height * width * 3 // 2)
+        psnr = 10 * np.log10(255 * 255 / mse)
+        PSNR.append(psnr)
+
+        video.write(re_rgb)  
+    plt.title('PSNR per Frame')
+    plt.ylim([50, 100])
+    plt.plot(PSNR)
     plt.show()
-    print(l_comp)
-    # compression = (height * width * 3 // 2 * num_frame) /  total_length
-    # print("compression ratio: " + str(compression))
-    compression = sum(l_comp) / len(l_comp)
-    print("compression_ratio: ", compression)
 
 
 if __name__ == '__main__':
