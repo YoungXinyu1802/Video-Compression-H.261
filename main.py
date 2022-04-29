@@ -156,28 +156,29 @@ def IextractCoefficients(coeffMat,width,height):
 
     return blockMat
 
-def motionEstimation(y_curr, y_ref, cr_ref, cb_ref, width, height):
+def motionEstimation(y_curr, y_ref, u_ref, v_ref, width, height):
     '''
     Computes motion estimation for an image based on its reference frame.
     :param y_curr: Y component of current frame; motion estimation is soley done on Y component.
     :param y_ref: Y component of reference frame.
-    :param cr_ref: Cr component of reference frame.
-    :param cb_ref: Cb component of reference frame.
+    :param u_ref: u component of reference frame.
+    :param v_ref: v component of reference frame.
     :param width: width of frame.
     :param height: height of frame.
-    :return: YCrCb components of predicted frame, coordinate matrix for quiver plot, and motion vector matrices.
+    :return: YUV components of predicted frame, coordinate matrix for quiver plot, and motion vector matrices.
     '''
+    # Init y_pred u_pred v_pred etc;
     h_num = math.ceil(height/16)
     w_num = math.ceil(width/16)
     size = h_num*w_num
-    MV_arr = MV_subarr = np.zeros((2, size)).astype(int)
+    MotionVector_arr = MotionVector_subarr = np.zeros((2, size)).astype(int)
     y_pred = np.zeros((height, width))
-    cb_pred = cr_pred = np.zeros((height // 2, width // 2))
-    coordMat = np.zeros((4,size))
+    u_pred = v_pred = np.zeros((height // 2, width // 2))
+    CoMatrix = np.zeros((4,size))
     mv_row = mv_col = 0
 
-    # Search window sizes depend on where the macroblock is in the frame; i.e. at an edge, column/row, or in the middle.
-    SW_dict = {
+    # Different location has different search size
+    SearchWindow_dict = {
         576: 81,
         768: 153,
         1024: 289
@@ -199,50 +200,50 @@ def motionEstimation(y_curr, y_ref, cr_ref, cb_ref, width, height):
         SW_y = SW_hmax - SW_hmin
         SW_size = int(SW_x * SW_y)
 
-        # No. of candidate blocks == search window area.
-        SAD_len = 0
-        for x, y in SW_dict.items():
+        # Number of candidate blocks == SearchArea.
+        SearchArea = 0
+        for x, y in SearchWindow_dict.items():
             if x == SW_size:
-                SAD_len = y
+                SearchArea = y
                 break
-        SAD_vect = np.zeros(SAD_len)
-        SAD_arr = np.zeros((2, SAD_len)).astype(int)
-        for i in range(SAD_len):
-            SAD_vect[i] = 99999.0
-            SAD_arr[0, i] = -1
-            SAD_arr[1, i] = -1
+        SA_vect = np.zeros(SearchArea)
+        SA_arr = np.zeros((2, SearchArea)).astype(int)
+        for i in range(SearchArea):
+            SA_vect[i] = 99999.0
+            SA_arr[0, i] = -1
+            SA_arr[1, i] = -1
 
         # Go through the designated search window for the current macroblock.
-        SW_idx = 0
+        SW_tmp = 0
         for i, j in product(range(SW_hmin, SW_hmax - 15), range(SW_wmin, SW_wmax - 15)):
             MB_temp = y_ref[i:i + 16, j:j + 16]
             if MB_curr.shape[0] != 16 or MB_curr.shape[1] != 16:
                 pass
             else:
                 diff = np.float32(MB_curr) - np.float32(MB_temp)
-                SAD_vect[SW_idx] = np.sum(np.abs(diff))
-                SAD_arr[0, SW_idx] = i
-                SAD_arr[1, SW_idx] = j
-                SW_idx += 1
+                SA_vect[SW_tmp] = np.sum(np.abs(diff))
+                SA_arr[0, SW_tmp] = i
+                SA_arr[1, SW_tmp] = j
+                SW_tmp += 1
 
         if MB_curr.shape[0] != 16 or MB_curr.shape[1] != 16:
             pass
         else:
-        # Get minimum SAD (sum of absolute differences) and search for its corresponding coordinates.
-            SAD_min = min(SAD_vect)
-            for i in range(SAD_len):
-                if SAD_vect[i] == SAD_min:
-                    mv_row = (SAD_arr[0, i])
-                    mv_col = (SAD_arr[1, i])
+        # Get minimum SAD (sum of absolute differences) and search for its corresponding microblock.
+            SAD_min = min(SA_vect)
+            for i in range(SearchArea):
+                if SA_vect[i] == SAD_min:
+                    mv_row = (SA_arr[0, i])
+                    mv_col = (SA_arr[1, i])
                     break
 
             # The coordinates gives the the top left pixel + the motion vector coordinates dx and dy.
-            MV_arr[0, mv_idx] = mv_row - n
-            MV_arr[1, mv_idx] = mv_col - m
+            MotionVector_arr[0, mv_idx] = mv_row - n
+            MotionVector_arr[1, mv_idx] = mv_col - m
 
-            # Do the same for cb/cr, which are subsampled.
-            MV_subarr[0, mv_idx] = int((mv_row - n) // 2)
-            MV_subarr[1, mv_idx] = int((mv_col - m) // 2)
+            # Do the same for u/v
+            MotionVector_subarr[0, mv_idx] = int((mv_row - n) // 2)
+            MotionVector_subarr[1, mv_idx] = int((mv_col - m) // 2)
 
         if MB_curr.shape[0] != 16 or MB_curr.shape[1] != 16:
             y_pred[n:n + 16, m:m + 16] = np.float32(y_ref[n:n + MB_curr.shape[0], m: m+ MB_curr.shape[1]])
@@ -251,29 +252,29 @@ def motionEstimation(y_curr, y_ref, cr_ref, cb_ref, width, height):
             y_pred[n:n + 16, m:m + 16] = np.float32(y_ref[mv_row:mv_row + 16, mv_col:mv_col + 16])
 
             # Get motion vector inputs for quiver().
-            coordMat[0, mv_idx] = m
-            coordMat[1, mv_idx] = n
-            coordMat[2, mv_idx] = mv_col - m
-            coordMat[3, mv_idx] = mv_row - n
+            CoMatrix[0, mv_idx] = m
+            CoMatrix[1, mv_idx] = n
+            CoMatrix[2, mv_idx] = mv_col - m
+            CoMatrix[3, mv_idx] = mv_row - n
 
             mv_idx += 1
 
-    # Do the same for cb/cr.
-    cbcr_idx = 0
+    # Reconstruct  u/v.
+    uv_idx = 0
     for i, j in product(range(0, (height // 2), 8), range(0, (width // 2), 8)):
         if i + 8 > (height//2):
-            cb_pred[i:height//2,j:j+8] = np.float32(cb_ref[i:height//2,j:j+8])
-            cr_pred[i:height//2,j:j+8] = np.float32(cr_ref[i:height//2,j:j+8])
+            u_pred[i:height//2,j:j+8] = np.float32(u_ref[i:height//2,j:j+8])
+            v_pred[i:height//2,j:j+8] = np.float32(v_ref[i:height//2,j:j+8])
         else:
-            ref_row = i + (MV_subarr[0, cbcr_idx])
-            ref_col = j + (MV_subarr[1, cbcr_idx])
+            ref_row = i + (MotionVector_subarr[0, uv_idx])
+            ref_col = j + (MotionVector_subarr[1, uv_idx])
 
-            cb_pred[i:i + 8, j:j + 8] = np.float32(cb_ref[ref_row:ref_row + 8, ref_col:ref_col + 8])
-            cr_pred[i:i + 8, j:j + 8] = np.float32(cr_ref[ref_row:ref_row + 8, ref_col:ref_col + 8])
+            u_pred[i:i + 8, j:j + 8] = np.float32(u_ref[ref_row:ref_row + 8, ref_col:ref_col + 8])
+            v_pred[i:i + 8, j:j + 8] = np.float32(v_ref[ref_row:ref_row + 8, ref_col:ref_col + 8])
 
-            cbcr_idx += 1
+            uv_idx += 1
 
-    return coordMat, MV_arr, MV_subarr, y_pred, cb_pred, cr_pred
+    return CoMatrix, MotionVector_arr, MotionVector_subarr, y_pred, u_pred, v_pred
 
 def getDC(CoeffMat):
     '''
@@ -455,8 +456,6 @@ def main():
         else:
             print("[P] compressing frame " + str(frame_num))
 
-            
-
             # Do motion estimatation using the I-frame as the reference frame for the current frame in the loop.python mpeg.py --file 'walk_qcif.avi' --extract 6 10
             coordMat, MV_arr, MV_subarr, yPred, uPred, vPred = motionEstimation(yCurr, yCurr, uCurr, vCurr, width,height)
 
@@ -475,21 +474,22 @@ def main():
 
             i += 1
             re_rgb = YUV2RGB(yRcn.astype(np.uint8),uRcn.astype(np.uint8),vRcn.astype(np.uint8), height, width)
-            diffMat = YUV2RGB(yDiff, uDiff, vDiff, height, width)
-            pred_rgb = YUV2RGB(yTmp, uTmp, vTmp, height, width)
-            plt.figure(figsize=(10, 10))
-            curr = YUV2RGB(yCurr, uCurr, vCurr, height, width)
-            curr_plt = cv.cvtColor(curr, cv.COLOR_BGR2RGB)
-            re_rgb_plt = cv.cvtColor(re_rgb, cv.COLOR_BGR2RGB)
-            pred_rgb_plt = cv.cvtColor(pred_rgb, cv.COLOR_BGR2RGB)
-            diffMat_plt = cv.cvtColor(diffMat, cv.COLOR_BGR2RGB)
-            plt.subplot(2, 2, 1).set_title('Current Image'), plt.imshow(curr_plt)
-            plt.subplot(2, 2, 3).set_title('Differential Image'), plt.imshow(diffMat_plt)
-            plt.subplot(2, 2, 2).set_title('Predicted Image'), plt.imshow(pred_rgb_plt)
-            plt.subplot(2, 2, 4).set_title('Motion Vectors'), plt.quiver(coordMat[0, :], coordMat[1, :], coordMat[2, :],
-                                                                        coordMat[3, :])
-            plt.savefig('result/train_'+str(i)+'.png')     
-            plt.close()
+            # diffMat = YUV2RGB(yDiff, uDiff, vDiff, height, width)
+            # pred_rgb = YUV2RGB(yTmp, uTmp, vTmp, height, width)
+            # # plot 
+            # plt.figure(figsize=(10, 10))
+            # curr = YUV2RGB(yCurr, uCurr, vCurr, height, width)
+            # curr_plt = cv.cvtColor(curr, cv.COLOR_BGR2RGB)
+            # re_rgb_plt = cv.cvtColor(re_rgb, cv.COLOR_BGR2RGB)
+            # pred_rgb_plt = cv.cvtColor(pred_rgb, cv.COLOR_BGR2RGB)
+            # diffMat_plt = cv.cvtColor(diffMat, cv.COLOR_BGR2RGB)
+            # plt.subplot(2, 2, 1).set_title('Current Image'), plt.imshow(curr_plt)
+            # plt.subplot(2, 2, 3).set_title('Differential Image'), plt.imshow(diffMat_plt)
+            # plt.subplot(2, 2, 2).set_title('Predicted Image'), plt.imshow(pred_rgb_plt)
+            # plt.subplot(2, 2, 4).set_title('Motion Vectors'), plt.quiver(coordMat[0, :], coordMat[1, :], coordMat[2, :],
+            #                                                             coordMat[3, :])
+            # plt.savefig('result/train_'+str(i)+'.png')     
+            # plt.close()
             
         mse = (np.linalg.norm(yRcn - yCurr) + np.linalg.norm(uRcn - uCurr)  + np.linalg.norm(vRcn - vCurr)) \
                 / (height * width * 3 // 2)
