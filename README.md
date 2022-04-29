@@ -1,6 +1,22 @@
-# Video-Compression-H.261
-Final project of Fundamentals of Multimedia
+# Video-Compression
+Development environment: Python3
+
+Install Python Library:
 
 ```shell
-python .\main__.py --src output.yuv --size 640x360 --fps 30 --dst output2.avi
+pip install -r requirements
 ```
+
+Command to run:
+
+```shell
+python .\main__.py --src Dance.yuv --size 640x360 --fps 30 --dst Dance.avi
+```
+
+- src: file path of the source video (in the .yuv format)
+
+- size: `height`x`width`
+
+- fps: the frame per second of the source video
+
+- dst: file path of the destination video (int the .avi format)
