@@ -21,4 +21,4 @@ python .\main__.py --src Dance.yuv --size 640x360 --fps 30 --dst Dance.avi
 
 - fps: the frame per second of the source video
 
-- dst: file path of the destination video (int the .avi format)
+- dst: file path of the destination video (in the .avi format)
